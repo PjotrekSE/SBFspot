@@ -62,6 +62,9 @@ DISCLAIMER:
 #include <limits.h>
 #include <math.h>
 #include <time.h>
+#include <stdint.h>
+#include <signal.h>
+#include <unistd.h>
 #include "bluetooth.h"
 #include "Ethernet.h"
 #include "SBFNet.h"
@@ -94,6 +97,14 @@ char DateFormat[32];
 CONNECTIONTYPE ConnType = CT_NONE;
 TagDefs tagdefs = TagDefs();
 bool hasBatteryDevice = false;	// Plant has 1 or more battery device(s)
+
+// Signal handling public vars
+volatile sig_atomic_t term = 0;
+volatile sig_atomic_t hup  = 0;
+
+// Signal handling funx
+void setTerm(int signum) { term = 1; }
+void setHup( int signum) { hup  = 1; }
 
 int main(int argc, char **argv)
 {
@@ -247,460 +258,526 @@ int main(int argc, char **argv)
 		return rc;
 	}
 
-	// Synchronize plant time with system time
-    // Only BT connected devices and if enabled in config _or_ requested by 123Solar
-	// Most probably Speedwire devices get their time from the local IP network
-    if ((ConnType == CT_BLUETOOTH) && (cfg.synchTime > 0 || cfg.s123 == S123_SYNC ))
-		if ((rc = SetPlantTime(cfg.synchTime, cfg.synchTimeLow, cfg.synchTimeHigh)) != E_OK)
-			std::cerr << "SetPlantTime returned an error: " << rc << std::endl;
+	// Set up signal actions
+	// SIGTERM handling
+  struct sigaction termAction;
+  memset(&termAction, 0, sizeof(struct sigaction));
+  termAction.sa_handler = setTerm;
+  sigaction(SIGTERM, &termAction, NULL);
+  sigaction(SIGINT,  &termAction, NULL);
 
-//	if ((rc = getInverterData(Inverters, sbftest)) != 0)
-//        std::cerr << "getInverterData(sbftest) returned an error: " << rc << std::endl;
+	// SIGHUP handling
+  struct sigaction hupAction;
+  memset(&hupAction, 0, sizeof(struct sigaction));
+  hupAction.sa_handler = setHup;
+  sigaction(SIGHUP, &hupAction, NULL);
+	
+	// Set up loop timing
+	struct timespec ts;
+	uint16_t start; uint16_t ready; uint16_t used; uint16_t remain; uint16_t interval;
+	uint16_t accum    = static_cast<uint16_t>(0);
+  uint16_t loop = 0;
+	
+  while (!term) {
+		// Get loop start time
+		interval = static_cast<uint16_t>(cfg.RunInterval) * 60000;
+		clock_gettime(CLOCK_REALTIME, &ts);
+		start = as_milliseconds(&ts);
+		// Now do the job!
+		
+		// Synchronize plant time with system time
+			// Only BT connected devices and if enabled in config _or_ requested by 123Solar
+		// Most probably Speedwire devices get their time from the local IP network
+			if ((ConnType == CT_BLUETOOTH) && (cfg.synchTime > 0 || cfg.s123 == S123_SYNC ))
+			if ((rc = SetPlantTime(cfg.synchTime, cfg.synchTimeLow, cfg.synchTimeHigh)) != E_OK)
+				std::cerr << "SetPlantTime returned an error: " << rc << std::endl;
 
-	if ((rc = getInverterData(Inverters, SoftwareVersion)) != 0)
-        std::cerr << "getSoftwareVersion returned an error: " << rc << std::endl;
+	//	if ((rc = getInverterData(Inverters, sbftest)) != 0)
+	//        std::cerr << "getInverterData(sbftest) returned an error: " << rc << std::endl;
 
-    if ((rc = getInverterData(Inverters, TypeLabel)) != 0)
-        std::cerr << "getTypeLabel returned an error: " << rc << std::endl;
-    else
-    {
-        for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-        {
-			if ((Inverters[inv]->DevClass == BatteryInverter) || (Inverters[inv]->SUSyID == 292))	//SB 3600-SE (Smart Energy)
-				hasBatteryDevice = Inverters[inv]->hasBattery = true;
+		if ((rc = getInverterData(Inverters, SoftwareVersion)) != 0)
+					std::cerr << "getSoftwareVersion returned an error: " << rc << std::endl;
+
+			if ((rc = getInverterData(Inverters, TypeLabel)) != 0)
+					std::cerr << "getTypeLabel returned an error: " << rc << std::endl;
 			else
-				Inverters[inv]->hasBattery = false;
-
-            if (VERBOSE_NORMAL)
-            {
-                printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-                printf("Device Name:      %s\n", Inverters[inv]->DeviceName);
-                printf("Device Class:     %s%s\n", Inverters[inv]->DeviceClass, (Inverters[inv]->SUSyID == 292) ? " (with battery)":"");
-                printf("Device Type:      %s\n", Inverters[inv]->DeviceType);
-                printf("Software Version: %s\n", Inverters[inv]->SWVersion);
-                printf("Serial number:    %lu\n", Inverters[inv]->Serial);
-            }
-        }
-    }
-
-	if (hasBatteryDevice)
-	{
-		if ((rc = getInverterData(Inverters, BatteryChargeStatus)) != 0)
-	        std::cerr << "getBatteryChargeStatus returned an error: " << rc << std::endl;
-		else
-		{
-			for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
 			{
-				if ((Inverters[inv]->DevClass == BatteryInverter) || (Inverters[inv]->hasBattery))
-				{
-					if (VERBOSE_NORMAL)
+					for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
 					{
-						printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-						printf("Batt. Charging Status: %lu%%\n", Inverters[inv]->BatChaStt);
-					}
-				}
-			}
-		}
+				if ((Inverters[inv]->DevClass == BatteryInverter) || (Inverters[inv]->SUSyID == 292))	//SB 3600-SE (Smart Energy)
+					hasBatteryDevice = Inverters[inv]->hasBattery = true;
+				else
+					Inverters[inv]->hasBattery = false;
 
-		if ((rc = getInverterData(Inverters, BatteryInfo)) != 0)
-	        std::cerr << "getBatteryInfo returned an error: " << rc << std::endl;
-		else
+							if (VERBOSE_NORMAL)
+							{
+									printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+									printf("Device Name:      %s\n", Inverters[inv]->DeviceName);
+									printf("Device Class:     %s%s\n", Inverters[inv]->DeviceClass, (Inverters[inv]->SUSyID == 292) ? " (with battery)":"");
+									printf("Device Type:      %s\n", Inverters[inv]->DeviceType);
+									printf("Software Version: %s\n", Inverters[inv]->SWVersion);
+									printf("Serial number:    %lu\n", Inverters[inv]->Serial);
+							}
+					}
+			}
+
+		if (hasBatteryDevice)
 		{
-			for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+			if ((rc = getInverterData(Inverters, BatteryChargeStatus)) != 0)
+						std::cerr << "getBatteryChargeStatus returned an error: " << rc << std::endl;
+			else
 			{
-				if ((Inverters[inv]->DevClass == BatteryInverter) || (Inverters[inv]->hasBattery))
+				for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
 				{
-					if (VERBOSE_NORMAL)
+					if ((Inverters[inv]->DevClass == BatteryInverter) || (Inverters[inv]->hasBattery))
 					{
-						printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-						printf("Batt. Temperature: %3.1f%sC\n", (float)(Inverters[inv]->BatTmpVal / 10), SYM_DEGREE); // degree symbol is different on windows/linux
-						printf("Batt. Voltage    : %3.2fV\n", toVolt(Inverters[inv]->BatVol));
-						printf("Batt. Current    : %2.3fA\n", toAmp(Inverters[inv]->BatAmp));
-					}
-				}
-			}
-		}
-
-		if ((rc = getInverterData(Inverters, MeteringGridMsTotW)) != 0)
-	        std::cerr << "getMeteringGridInfo returned an error: " << rc << std::endl;
-		else
-		{
-			for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-			{
-				if ((Inverters[inv]->DevClass == BatteryInverter) || (Inverters[inv]->hasBattery))
-				{
-					if (VERBOSE_NORMAL)
-					{
-						printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-						printf("Grid Power Out : %dW\n", Inverters[inv]->MeteringGridMsTotWOut);
-						printf("Grid Power In  : %dW\n", Inverters[inv]->MeteringGridMsTotWIn);
-					}
-				}
-			}
-		}
-	}
-
-    if ((rc = getInverterData(Inverters, DeviceStatus)) != 0)
-        std::cerr << "getDeviceStatus returned an error: " << rc << std::endl;
-    else
-    {
-        for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-        {
-            if (VERBOSE_NORMAL)
-            {
-                printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-				printf("Device Status:      %s\n", tagdefs.getDesc(Inverters[inv]->DeviceStatus, "?").c_str());
-            }
-        }
-    }
-
-	if ((rc = getInverterData(Inverters, InverterTemperature)) != 0)
-        std::cerr << "getInverterTemperature returned an error: " << rc << std::endl;
-    else
-    {
-        for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-        {
-            if (VERBOSE_NORMAL)
-            {
-                printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-				printf("Device Temperature: %3.1f%sC\n", ((float)Inverters[inv]->Temperature / 100), SYM_DEGREE); // degree symbol is different on windows/linux
-            }
-        }
-    }
-
-	if (Inverters[0]->DevClass == SolarInverter)
-    {
-        if ((rc = getInverterData(Inverters, GridRelayStatus)) != 0)
-	        std::cerr << "getGridRelayStatus returned an error: " << rc << std::endl;
-        else
-        {
-            for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-            {
-                if (Inverters[inv]->DevClass == SolarInverter)
-                {
-                    if (VERBOSE_NORMAL)
-                    {
-                        printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-						printf("GridRelay Status:      %s\n", tagdefs.getDesc(Inverters[inv]->GridRelayStatus, "?").c_str());
-                    }
-                }
-            }
-        }
-    }
-
-    if ((rc = getInverterData(Inverters, MaxACPower)) != 0)
-        std::cerr << "getMaxACPower returned an error: " << rc << std::endl;
-    else
-    {
-        //TODO: REVIEW THIS PART (getMaxACPower & getMaxACPower2 should be 1 function)
-        if ((Inverters[0]->Pmax1 == 0) && (rc = getInverterData(Inverters, MaxACPower2)) != 0)
-	        std::cerr << "getMaxACPower2 returned an error: " << rc << std::endl;
-        else
-        {
-            for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-            {
-                if (VERBOSE_NORMAL)
-                {
-                    printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-                    printf("Pac max phase 1: %luW\n", Inverters[inv]->Pmax1);
-                    printf("Pac max phase 2: %luW\n", Inverters[inv]->Pmax2);
-                    printf("Pac max phase 3: %luW\n", Inverters[inv]->Pmax3);
-                }
-            }
-        }
-    }
-
-    if ((rc = getInverterData(Inverters, EnergyProduction)) != 0)
-        std::cerr << "getEnergyProduction returned an error: " << rc << std::endl;
-
-    if ((rc = getInverterData(Inverters, OperationTime)) != 0)
-        std::cerr << "getOperationTime returned an error: " << rc << std::endl;
-    else
-    {
-        for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-        {
-            if (VERBOSE_NORMAL)
-            {
-                printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-                puts("Energy Production:");
-                printf("\tEToday: %.3fkWh\n", tokWh(Inverters[inv]->EToday));
-                printf("\tETotal: %.3fkWh\n", tokWh(Inverters[inv]->ETotal));
-                printf("\tOperation Time: %.2fh\n", toHour(Inverters[inv]->OperationTime));
-                printf("\tFeed-In Time  : %.2fh\n", toHour(Inverters[inv]->FeedInTime));
-            }
-        }
-    }
-
-    if ((rc = getInverterData(Inverters, SpotDCPower)) != 0)
-        std::cerr << "getSpotDCPower returned an error: " << rc << std::endl;
-
-    if ((rc = getInverterData(Inverters, SpotDCVoltage)) != 0)
-        std::cerr << "getSpotDCVoltage returned an error: " << rc << std::endl;
-
-    //Calculate missing DC Spot Values
-    if (cfg.calcMissingSpot == 1)
-        CalcMissingSpot(Inverters[0]);
-
-    for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-    {
-		Inverters[inv]->calPdcTot = Inverters[inv]->Pdc1 + Inverters[inv]->Pdc2;
-        if (VERBOSE_NORMAL)
-        {
-            printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-            puts("DC Spot Data:");
-            printf("\tString 1 Pdc: %7.3fkW - Udc: %6.2fV - Idc: %6.3fA\n", tokW(Inverters[inv]->Pdc1), toVolt(Inverters[inv]->Udc1), toAmp(Inverters[inv]->Idc1));
-            printf("\tString 2 Pdc: %7.3fkW - Udc: %6.2fV - Idc: %6.3fA\n", tokW(Inverters[inv]->Pdc2), toVolt(Inverters[inv]->Udc2), toAmp(Inverters[inv]->Idc2));
-        }
-    }
-
-    if ((rc = getInverterData(Inverters, SpotACPower)) != 0)
-        std::cerr << "getSpotACPower returned an error: " << rc << std::endl;
-
-    if ((rc = getInverterData(Inverters, SpotACVoltage)) != 0)
-        std::cerr << "getSpotACVoltage returned an error: " << rc << std::endl;
-
-    if ((rc = getInverterData(Inverters, SpotACTotalPower)) != 0)
-        std::cerr << "getSpotACTotalPower returned an error: " << rc << std::endl;
-
-    //Calculate missing AC Spot Values
-    if (cfg.calcMissingSpot == 1)
-        CalcMissingSpot(Inverters[0]);
-
-    for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-    {
-        if (VERBOSE_NORMAL)
-        {
-            printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-            puts("AC Spot Data:");
-            printf("\tPhase 1 Pac : %7.3fkW - Uac: %6.2fV - Iac: %6.3fA\n", tokW(Inverters[inv]->Pac1), toVolt(Inverters[inv]->Uac1), toAmp(Inverters[inv]->Iac1));
-            printf("\tPhase 2 Pac : %7.3fkW - Uac: %6.2fV - Iac: %6.3fA\n", tokW(Inverters[inv]->Pac2), toVolt(Inverters[inv]->Uac2), toAmp(Inverters[inv]->Iac2));
-            printf("\tPhase 3 Pac : %7.3fkW - Uac: %6.2fV - Iac: %6.3fA\n", tokW(Inverters[inv]->Pac3), toVolt(Inverters[inv]->Uac3), toAmp(Inverters[inv]->Iac3));
-            printf("\tTotal Pac   : %7.3fkW\n", tokW(Inverters[inv]->TotalPac));
-        }
-    }
-
-    if ((rc = getInverterData(Inverters, SpotGridFrequency)) != 0)
-        std::cerr << "getSpotGridFrequency returned an error: " << rc << std::endl;
-    else
-    {
-        for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-        {
-            if (VERBOSE_NORMAL)
-            {
-                printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-                printf("Grid Freq. : %.2fHz\n", toHz(Inverters[inv]->GridFreq));
-            }
-        }
-    }
-
-    if (Inverters[0]->DevClass == SolarInverter)
-	{
-		for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-		{
-			if (VERBOSE_NORMAL)
-			{
-				printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-				if (Inverters[inv]->InverterDatetime > 0)
-					printf("Current Inverter Time: %s\n", strftime_t(cfg.DateTimeFormat, Inverters[inv]->InverterDatetime));
-
-				if (Inverters[inv]->WakeupTime > 0)
-					printf("Inverter Wake-Up Time: %s\n", strftime_t(cfg.DateTimeFormat, Inverters[inv]->WakeupTime));
-
-				if (Inverters[inv]->SleepTime > 0)
-					printf("Inverter Sleep Time  : %s\n", strftime_t(cfg.DateTimeFormat, Inverters[inv]->SleepTime));
-			}
-		}
-	}
-
-	if (Inverters[0]->DevClass == SolarInverter)
-	{
-		if ((cfg.CSV_Export == 1) && (cfg.nospot == 0))
-			ExportSpotDataToCSV(&cfg, Inverters);
-
-		if (cfg.wsl == 1)
-			ExportSpotDataToWSL(&cfg, Inverters);
-
-		if (cfg.s123 == S123_DATA)
-			ExportSpotDataTo123s(&cfg, Inverters);
-		if (cfg.s123 == S123_INFO)
-			ExportInformationDataTo123s(&cfg, Inverters);
-		if (cfg.s123 == S123_STATE)
-			ExportStateDataTo123s(&cfg, Inverters);
-	}
-
-	if (hasBatteryDevice && (cfg.CSV_Export == 1) && (cfg.nospot == 0))
-		ExportBatteryDataToCSV(&cfg, Inverters);
-
-	#if defined(USE_SQLITE) || defined(USE_MYSQL)
-	db_SQL_Export db = db_SQL_Export();
-	if (!cfg.nosql)
-	{
-		db.open(cfg.sqlHostname, cfg.sqlUsername, cfg.sqlUserPassword, cfg.sqlDatabase);
-		if (db.isopen())
-		{
-			time_t spottime = time(NULL);
-			db.type_label(Inverters);
-			db.device_status(Inverters, spottime);
-			db.spot_data(Inverters, spottime);
-			if (hasBatteryDevice) 
-				db.battery_data(Inverters, spottime);
-		}
-	}
-	#endif
-
-	/*******
-	* MQTT *
-	********/
-	if (cfg.mqtt == 1) // MQTT enabled
-	{
-		rc = mqtt_publish(&cfg, Inverters);
-		if (rc != 0)
-		{
-			std::cout << "Error " << rc << " while publishing to MQTT Broker" << std::endl;
-		}
-	}
-
-	//SolarInverter -> Continue to get archive data
-	unsigned int idx;
-
-    /***************
-    * Get Day Data *
-    ****************/
-    time_t arch_time = (0 == cfg.startdate) ? time(NULL) : cfg.startdate;
-
-    for (int count=0; count<cfg.archDays; count++)
-    {
-        if ((rc = ArchiveDayData(Inverters, arch_time)) != E_OK)
-        {
-            if (rc != E_ARCHNODATA)
-		        std::cerr << "ArchiveDayData returned an error: " << rc << std::endl;
-        }
-        else
-        {
-            if (VERBOSE_HIGH)
-            {
-                for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
-                {
-                    printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-                    for (idx=0; idx<sizeof(Inverters[inv]->dayData)/sizeof(DayData); idx++)
-                        if (Inverters[inv]->dayData[idx].datetime > 0)
+						if (VERBOSE_NORMAL)
 						{
-                            printf("%s : %.3fkWh - %3.3fW\n", strftime_t(cfg.DateTimeFormat, Inverters[inv]->dayData[idx].datetime), (double)Inverters[inv]->dayData[idx].totalWh/1000, (double)Inverters[inv]->dayData[idx].watt);
-						    fflush(stdout);
+							printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+							printf("Batt. Charging Status: %lu%%\n", Inverters[inv]->BatChaStt);
 						}
-                    puts("======");
-                }
-            }
+					}
+				}
+			}
 
-            if (cfg.CSV_Export == 1)
-                ExportDayDataToCSV(&cfg, Inverters);
-
-			#if defined(USE_SQLITE) || defined(USE_MYSQL)
-			if ((!cfg.nosql) && db.isopen())
-				db.day_data(Inverters);
-			#endif
-        }
-
-        //Goto previous day
-        arch_time -= 86400;
-    }
-
-
-    /*****************
-    * Get Month Data *
-    ******************/
-	if (cfg.archMonths > 0)
-	{
-		getMonthDataOffset(Inverters); //Issues 115/130
-		arch_time = (0 == cfg.startdate) ? time(NULL) : cfg.startdate;
-		struct tm arch_tm;
-		memcpy(&arch_tm, gmtime(&arch_time), sizeof(arch_tm));
-
-		for (int count=0; count<cfg.archMonths; count++)
-		{
-			ArchiveMonthData(Inverters, &arch_tm);
-
-			if (VERBOSE_HIGH)
+			if ((rc = getInverterData(Inverters, BatteryInfo)) != 0)
+						std::cerr << "getBatteryInfo returned an error: " << rc << std::endl;
+			else
 			{
-				for (int inv = 0; Inverters[inv] != NULL && inv<MAX_INVERTERS; inv++)
+				for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+				{
+					if ((Inverters[inv]->DevClass == BatteryInverter) || (Inverters[inv]->hasBattery))
+					{
+						if (VERBOSE_NORMAL)
+						{
+							printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+							printf("Batt. Temperature: %3.1f%sC\n", (float)(Inverters[inv]->BatTmpVal / 10), SYM_DEGREE); // degree symbol is different on windows/linux
+							printf("Batt. Voltage    : %3.2fV\n", toVolt(Inverters[inv]->BatVol));
+							printf("Batt. Current    : %2.3fA\n", toAmp(Inverters[inv]->BatAmp));
+						}
+					}
+				}
+			}
+
+			if ((rc = getInverterData(Inverters, MeteringGridMsTotW)) != 0)
+						std::cerr << "getMeteringGridInfo returned an error: " << rc << std::endl;
+			else
+			{
+				for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+				{
+					if ((Inverters[inv]->DevClass == BatteryInverter) || (Inverters[inv]->hasBattery))
+					{
+						if (VERBOSE_NORMAL)
+						{
+							printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+							printf("Grid Power Out : %dW\n", Inverters[inv]->MeteringGridMsTotWOut);
+							printf("Grid Power In  : %dW\n", Inverters[inv]->MeteringGridMsTotWIn);
+						}
+					}
+				}
+			}
+		}
+
+			if ((rc = getInverterData(Inverters, DeviceStatus)) != 0)
+					std::cerr << "getDeviceStatus returned an error: " << rc << std::endl;
+			else
+			{
+					for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+					{
+							if (VERBOSE_NORMAL)
+							{
+									printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+					printf("Device Status:      %s\n", tagdefs.getDesc(Inverters[inv]->DeviceStatus, "?").c_str());
+							}
+					}
+			}
+
+		if ((rc = getInverterData(Inverters, InverterTemperature)) != 0)
+					std::cerr << "getInverterTemperature returned an error: " << rc << std::endl;
+			else
+			{
+					for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+					{
+							if (VERBOSE_NORMAL)
+							{
+									printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+					printf("Device Temperature: %3.1f%sC\n", ((float)Inverters[inv]->Temperature / 100), SYM_DEGREE); // degree symbol is different on windows/linux
+							}
+					}
+			}
+
+		if (Inverters[0]->DevClass == SolarInverter)
+			{
+					if ((rc = getInverterData(Inverters, GridRelayStatus)) != 0)
+						std::cerr << "getGridRelayStatus returned an error: " << rc << std::endl;
+					else
+					{
+							for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+							{
+									if (Inverters[inv]->DevClass == SolarInverter)
+									{
+											if (VERBOSE_NORMAL)
+											{
+													printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+							printf("GridRelay Status:      %s\n", tagdefs.getDesc(Inverters[inv]->GridRelayStatus, "?").c_str());
+											}
+									}
+							}
+					}
+			}
+
+			if ((rc = getInverterData(Inverters, MaxACPower)) != 0)
+					std::cerr << "getMaxACPower returned an error: " << rc << std::endl;
+			else
+			{
+					//TODO: REVIEW THIS PART (getMaxACPower & getMaxACPower2 should be 1 function)
+					if ((Inverters[0]->Pmax1 == 0) && (rc = getInverterData(Inverters, MaxACPower2)) != 0)
+						std::cerr << "getMaxACPower2 returned an error: " << rc << std::endl;
+					else
+					{
+							for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+							{
+									if (VERBOSE_NORMAL)
+									{
+											printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+											printf("Pac max phase 1: %luW\n", Inverters[inv]->Pmax1);
+											printf("Pac max phase 2: %luW\n", Inverters[inv]->Pmax2);
+											printf("Pac max phase 3: %luW\n", Inverters[inv]->Pmax3);
+									}
+							}
+					}
+			}
+
+			if ((rc = getInverterData(Inverters, EnergyProduction)) != 0)
+					std::cerr << "getEnergyProduction returned an error: " << rc << std::endl;
+
+			if ((rc = getInverterData(Inverters, OperationTime)) != 0)
+					std::cerr << "getOperationTime returned an error: " << rc << std::endl;
+			else
+			{
+					for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+					{
+							if (VERBOSE_NORMAL)
+							{
+									printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+									puts("Energy Production:");
+									printf("\tEToday: %.3fkWh\n", tokWh(Inverters[inv]->EToday));
+									printf("\tETotal: %.3fkWh\n", tokWh(Inverters[inv]->ETotal));
+									printf("\tOperation Time: %.2fh\n", toHour(Inverters[inv]->OperationTime));
+									printf("\tFeed-In Time  : %.2fh\n", toHour(Inverters[inv]->FeedInTime));
+							}
+					}
+			}
+
+			if ((rc = getInverterData(Inverters, SpotDCPower)) != 0)
+					std::cerr << "getSpotDCPower returned an error: " << rc << std::endl;
+
+			if ((rc = getInverterData(Inverters, SpotDCVoltage)) != 0)
+					std::cerr << "getSpotDCVoltage returned an error: " << rc << std::endl;
+
+			//Calculate missing DC Spot Values
+			if (cfg.calcMissingSpot == 1)
+					CalcMissingSpot(Inverters[0]);
+
+			for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+			{
+			Inverters[inv]->calPdcTot = Inverters[inv]->Pdc1 + Inverters[inv]->Pdc2;
+					if (VERBOSE_NORMAL)
+					{
+							printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+							puts("DC Spot Data:");
+							printf("\tString 1 Pdc: %7.3fkW - Udc: %6.2fV - Idc: %6.3fA\n", tokW(Inverters[inv]->Pdc1), toVolt(Inverters[inv]->Udc1), toAmp(Inverters[inv]->Idc1));
+							printf("\tString 2 Pdc: %7.3fkW - Udc: %6.2fV - Idc: %6.3fA\n", tokW(Inverters[inv]->Pdc2), toVolt(Inverters[inv]->Udc2), toAmp(Inverters[inv]->Idc2));
+					}
+			}
+
+			if ((rc = getInverterData(Inverters, SpotACPower)) != 0)
+					std::cerr << "getSpotACPower returned an error: " << rc << std::endl;
+
+			if ((rc = getInverterData(Inverters, SpotACVoltage)) != 0)
+					std::cerr << "getSpotACVoltage returned an error: " << rc << std::endl;
+
+			if ((rc = getInverterData(Inverters, SpotACTotalPower)) != 0)
+					std::cerr << "getSpotACTotalPower returned an error: " << rc << std::endl;
+
+			//Calculate missing AC Spot Values
+			if (cfg.calcMissingSpot == 1)
+					CalcMissingSpot(Inverters[0]);
+
+			for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+			{
+					if (VERBOSE_NORMAL)
+					{
+							printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+							puts("AC Spot Data:");
+							printf("\tPhase 1 Pac : %7.3fkW - Uac: %6.2fV - Iac: %6.3fA\n", tokW(Inverters[inv]->Pac1), toVolt(Inverters[inv]->Uac1), toAmp(Inverters[inv]->Iac1));
+							printf("\tPhase 2 Pac : %7.3fkW - Uac: %6.2fV - Iac: %6.3fA\n", tokW(Inverters[inv]->Pac2), toVolt(Inverters[inv]->Uac2), toAmp(Inverters[inv]->Iac2));
+							printf("\tPhase 3 Pac : %7.3fkW - Uac: %6.2fV - Iac: %6.3fA\n", tokW(Inverters[inv]->Pac3), toVolt(Inverters[inv]->Uac3), toAmp(Inverters[inv]->Iac3));
+							printf("\tTotal Pac   : %7.3fkW\n", tokW(Inverters[inv]->TotalPac));
+					}
+			}
+
+			if ((rc = getInverterData(Inverters, SpotGridFrequency)) != 0)
+					std::cerr << "getSpotGridFrequency returned an error: " << rc << std::endl;
+			else
+			{
+					for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+					{
+							if (VERBOSE_NORMAL)
+							{
+									printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+									printf("Grid Freq. : %.2fHz\n", toHz(Inverters[inv]->GridFreq));
+							}
+					}
+			}
+
+			if (Inverters[0]->DevClass == SolarInverter)
+		{
+			for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+			{
+				if (VERBOSE_NORMAL)
 				{
 					printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
-					for (unsigned int ii = 0; ii < sizeof(Inverters[inv]->monthData) / sizeof(MonthData); ii++)
-						if (Inverters[inv]->monthData[ii].datetime > 0)
-							printf("%s : %.3fkWh - %3.3fkWh\n", strfgmtime_t(cfg.DateFormat, Inverters[inv]->monthData[ii].datetime), (double)Inverters[inv]->monthData[ii].totalWh / 1000, (double)Inverters[inv]->monthData[ii].dayWh / 1000);
-					puts("======");
+					if (Inverters[inv]->InverterDatetime > 0)
+						printf("Current Inverter Time: %s\n", strftime_t(cfg.DateTimeFormat, Inverters[inv]->InverterDatetime));
+
+					if (Inverters[inv]->WakeupTime > 0)
+						printf("Inverter Wake-Up Time: %s\n", strftime_t(cfg.DateTimeFormat, Inverters[inv]->WakeupTime));
+
+					if (Inverters[inv]->SleepTime > 0)
+						printf("Inverter Sleep Time  : %s\n", strftime_t(cfg.DateTimeFormat, Inverters[inv]->SleepTime));
 				}
 			}
+		}
 
-			if (cfg.CSV_Export == 1)
-				ExportMonthDataToCSV(&cfg, Inverters);
+		if (Inverters[0]->DevClass == SolarInverter)
+		{
+			if ((cfg.CSV_Export == 1) && (cfg.nospot == 0))
+				ExportSpotDataToCSV(&cfg, Inverters);
 
-			#if defined(USE_SQLITE) || defined(USE_MYSQL)
-			if ((!cfg.nosql) && db.isopen())
-				db.month_data(Inverters);
-			#endif
+			if (cfg.wsl == 1)
+				ExportSpotDataToWSL(&cfg, Inverters);
 
-			//Go to previous month
-			if (--arch_tm.tm_mon < 0)
+			if (cfg.s123 == S123_DATA)
+				ExportSpotDataTo123s(&cfg, Inverters);
+			if (cfg.s123 == S123_INFO)
+				ExportInformationDataTo123s(&cfg, Inverters);
+			if (cfg.s123 == S123_STATE)
+				ExportStateDataTo123s(&cfg, Inverters);
+		}
+
+		if (hasBatteryDevice && (cfg.CSV_Export == 1) && (cfg.nospot == 0))
+			ExportBatteryDataToCSV(&cfg, Inverters);
+
+		#if defined(USE_SQLITE) || defined(USE_MYSQL)
+		db_SQL_Export db = db_SQL_Export();
+		if (!cfg.nosql)
+		{
+			db.open(cfg.sqlHostname, cfg.sqlUsername, cfg.sqlUserPassword, cfg.sqlDatabase);
+			if (db.isopen())
 			{
-				arch_tm.tm_mon = 11;
-				arch_tm.tm_year--;
+				time_t spottime = time(NULL);
+				db.type_label(Inverters);
+				db.device_status(Inverters, spottime);
+				db.spot_data(Inverters, spottime);
+				if (hasBatteryDevice) 
+					db.battery_data(Inverters, spottime);
 			}
 		}
-	}
+		#endif
 
-    /*****************
-    * Get Event Data *
-    ******************/
-	posix_time::ptime tm_utc(posix_time::from_time_t((0 == cfg.startdate) ? time(NULL) : cfg.startdate));
-	//ptime tm_utc(posix_time::second_clock::universal_time());
-	gregorian::date dt_utc(tm_utc.date().year(), tm_utc.date().month(), 1);
-	std::string dt_range_csv = str(format("%d%02d") % dt_utc.year() % static_cast<short>(dt_utc.month()));
-
-	for (int m = 0; m < cfg.archEventMonths; m++)
-	{
-		if (VERBOSE_LOW) cout << "Reading events: " << to_simple_string(dt_utc) << endl;
-		//Get user level events
-		rc = ArchiveEventData(Inverters, dt_utc, UG_USER);
-		if (rc == E_EOF) break; // No more data (first event reached)
-		else if (rc != E_OK) std::cerr << "ArchiveEventData(user) returned an error: " << rc << endl;
-
-		//When logged in as installer, get installer level events
-		if (cfg.userGroup == UG_INSTALLER)
+		/*******
+		* MQTT *
+		********/
+		if (cfg.mqtt == 1) // MQTT enabled
 		{
-			rc = ArchiveEventData(Inverters, dt_utc, UG_INSTALLER);
-			if (rc == E_EOF) break; // No more data (first event reached)
-			else if (rc != E_OK) std::cerr << "ArchiveEventData(installer) returned an error: " << rc << endl;
+			rc = mqtt_publish(&cfg, Inverters);
+			if (rc != 0)
+			{
+				std::cout << "Error " << rc << " while publishing to MQTT Broker" << std::endl;
+			}
 		}
 
-		//Move to previous month
-		if (dt_utc.month() == 1)
-			dt_utc = gregorian::date(dt_utc.year() - 1, 12, 1);
-		else
-			dt_utc = gregorian::date(dt_utc.year(), dt_utc.month() - 1, 1);
+		//SolarInverter -> Continue to get archive data
+		unsigned int idx;
 
+			/***************
+			* Get Day Data *
+			****************/
+			time_t arch_time = (0 == cfg.startdate) ? time(NULL) : cfg.startdate;
+
+			for (int count=0; count<cfg.archDays; count++)
+			{
+					if ((rc = ArchiveDayData(Inverters, arch_time)) != E_OK)
+					{
+							if (rc != E_ARCHNODATA)
+							std::cerr << "ArchiveDayData returned an error: " << rc << std::endl;
+					}
+					else
+					{
+							if (VERBOSE_HIGH)
+							{
+									for (int inv=0; Inverters[inv]!=NULL && inv<MAX_INVERTERS; inv++)
+									{
+											printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+											for (idx=0; idx<sizeof(Inverters[inv]->dayData)/sizeof(DayData); idx++)
+													if (Inverters[inv]->dayData[idx].datetime > 0)
+							{
+															printf("%s : %.3fkWh - %3.3fW\n", strftime_t(cfg.DateTimeFormat, Inverters[inv]->dayData[idx].datetime), (double)Inverters[inv]->dayData[idx].totalWh/1000, (double)Inverters[inv]->dayData[idx].watt);
+									fflush(stdout);
+							}
+											puts("======");
+									}
+							}
+
+							if (cfg.CSV_Export == 1)
+									ExportDayDataToCSV(&cfg, Inverters);
+
+				#if defined(USE_SQLITE) || defined(USE_MYSQL)
+				if ((!cfg.nosql) && db.isopen())
+					db.day_data(Inverters);
+				#endif
+					}
+
+					//Goto previous day
+					arch_time -= 86400;
+			}
+
+
+			/*****************
+			* Get Month Data *
+			******************/
+		if (cfg.archMonths > 0)
+		{
+			getMonthDataOffset(Inverters); //Issues 115/130
+			arch_time = (0 == cfg.startdate) ? time(NULL) : cfg.startdate;
+			struct tm arch_tm;
+			memcpy(&arch_tm, gmtime(&arch_time), sizeof(arch_tm));
+
+			for (int count=0; count<cfg.archMonths; count++)
+			{
+				ArchiveMonthData(Inverters, &arch_tm);
+
+				if (VERBOSE_HIGH)
+				{
+					for (int inv = 0; Inverters[inv] != NULL && inv<MAX_INVERTERS; inv++)
+					{
+						printf("SUSyID: %d - SN: %lu\n", Inverters[inv]->SUSyID, Inverters[inv]->Serial);
+						for (unsigned int ii = 0; ii < sizeof(Inverters[inv]->monthData) / sizeof(MonthData); ii++)
+							if (Inverters[inv]->monthData[ii].datetime > 0)
+								printf("%s : %.3fkWh - %3.3fkWh\n", strfgmtime_t(cfg.DateFormat, Inverters[inv]->monthData[ii].datetime), (double)Inverters[inv]->monthData[ii].totalWh / 1000, (double)Inverters[inv]->monthData[ii].dayWh / 1000);
+						puts("======");
+					}
+				}
+
+				if (cfg.CSV_Export == 1)
+					ExportMonthDataToCSV(&cfg, Inverters);
+
+				#if defined(USE_SQLITE) || defined(USE_MYSQL)
+				if ((!cfg.nosql) && db.isopen())
+					db.month_data(Inverters);
+				#endif
+
+				//Go to previous month
+				if (--arch_tm.tm_mon < 0)
+				{
+					arch_tm.tm_mon = 11;
+					arch_tm.tm_year--;
+				}
+			}
+		}
+
+			/*****************
+			* Get Event Data *
+			******************/
+		posix_time::ptime tm_utc(posix_time::from_time_t((0 == cfg.startdate) ? time(NULL) : cfg.startdate));
+		//ptime tm_utc(posix_time::second_clock::universal_time());
+		gregorian::date dt_utc(tm_utc.date().year(), tm_utc.date().month(), 1);
+		std::string dt_range_csv = str(format("%d%02d") % dt_utc.year() % static_cast<short>(dt_utc.month()));
+
+		for (int m = 0; m < cfg.archEventMonths; m++)
+		{
+			if (VERBOSE_LOW) cout << "Reading events: " << to_simple_string(dt_utc) << endl;
+			//Get user level events
+			rc = ArchiveEventData(Inverters, dt_utc, UG_USER);
+			if (rc == E_EOF) break; // No more data (first event reached)
+			else if (rc != E_OK) std::cerr << "ArchiveEventData(user) returned an error: " << rc << endl;
+
+			//When logged in as installer, get installer level events
+			if (cfg.userGroup == UG_INSTALLER)
+			{
+				rc = ArchiveEventData(Inverters, dt_utc, UG_INSTALLER);
+				if (rc == E_EOF) break; // No more data (first event reached)
+				else if (rc != E_OK) std::cerr << "ArchiveEventData(installer) returned an error: " << rc << endl;
+			}
+
+			//Move to previous month
+			if (dt_utc.month() == 1)
+				dt_utc = gregorian::date(dt_utc.year() - 1, 12, 1);
+			else
+				dt_utc = gregorian::date(dt_utc.year(), dt_utc.month() - 1, 1);
+
+		}
+
+		if (rc == E_OK)
+		{
+			//Adjust start of range with 1 month
+			if (dt_utc.month() == 12)
+				dt_utc = gregorian::date(dt_utc.year() + 1, 1, 1);
+			else
+				dt_utc = gregorian::date(dt_utc.year(), dt_utc.month() + 1, 1);
+		}
+
+		if ((rc == E_OK) || (rc == E_EOF))
+		{
+			dt_range_csv = str(format("%d%02d-%s") % dt_utc.year() % static_cast<short>(dt_utc.month()) % dt_range_csv);
+
+			if ((cfg.CSV_Export == 1) && (cfg.archEventMonths > 0))
+				ExportEventsToCSV(&cfg, Inverters, dt_range_csv);
+
+		#if defined(USE_SQLITE) || defined(USE_MYSQL)
+		if ((!cfg.nosql) && db.isopen())
+			db.event_data(Inverters, tagdefs);
+		#endif
+		}
+
+		// Did we get a sighup? If so, read alternate cfg from tmp
+		if (hup) {
+			hup = 0;
+			cfg.ConfigFile = "/tmp/SBFspot.cfg";
+			rc = GetConfig(&cfg);
+			if (rc != 0) return rc;
+		}
+		
+		// Loop timing
+		// struct timespec start, ready, used, accum, remain, interval;
+		clock_gettime(CLOCK_REALTIME, &ts);
+		ready  =  as_milliseconds(&ts);
+		used   =  ready - start;
+		accum += used;
+		remain = interval - used;
+		ts = as_timespec(remain);
+		if (VERBOSE_LOW) {
+			printf("lapse=%u used=%u ms, accum=%u ms, remain=%u ms, interv=%u ms\n\n", 
+							loop, used, accum,  remain, interval);
+		}
+		if (interval == 0) { // interval == 0 means run once
+			loop = 1;
+			break; 
+		}	
+		
+		// Loop timing handling
+		nanosleep(&ts, NULL);	// Wait till interval elapsed
+		loop++;
 	}
-
-	if (rc == E_OK)
-	{
-		//Adjust start of range with 1 month
-		if (dt_utc.month() == 12)
-			dt_utc = gregorian::date(dt_utc.year() + 1, 1, 1);
-		else
-			dt_utc = gregorian::date(dt_utc.year(), dt_utc.month() + 1, 1);
-	}
-
-	if ((rc == E_OK) || (rc == E_EOF))
-	{
-		dt_range_csv = str(format("%d%02d-%s") % dt_utc.year() % static_cast<short>(dt_utc.month()) % dt_range_csv);
-
-		if ((cfg.CSV_Export == 1) && (cfg.archEventMonths > 0))
-			ExportEventsToCSV(&cfg, Inverters, dt_range_csv);
-
-	#if defined(USE_SQLITE) || defined(USE_MYSQL)
-	if ((!cfg.nosql) && db.isopen())
-		db.event_data(Inverters, tagdefs);
-	#endif
+	// Loop timing result
+	uint16_t lapse = accum / loop;
+	if (VERBOSE_LOW) printf("Each lapse took %u ms\n", lapse);
+	
+	// If MQTT used: sleep 2 sec to make sure all mqtt messages were sent before disconnecting
+	if (cfg.mqtt == 1) {
+		ts.tv_sec = 0; ts.tv_nsec = 2000000L;
+		nanosleep(&ts, NULL);
 	}
 
 	if (cfg.ConnectionType == CT_BLUETOOTH)
@@ -2192,6 +2269,7 @@ int GetConfig(Config *cfg)
     cfg->decimalpoint = ',';
     cfg->BT_Timeout = 5;
     cfg->BT_ConnectRetries = 10;
+		cfg->RunInterval = 0;
 
     cfg->calcMissingSpot = 0;
     strcpy(cfg->DateTimeFormat, "%d/%m/%Y %H:%M:%S");
@@ -2525,6 +2603,17 @@ int GetConfig(Config *cfg)
 						return -2;
 					}
 				}
+				
+				// Run interval in minutes, must be >= 0, 0 means run once
+        else if(stricmp(variable, "RunInterval") == 0) {
+          lValue = strtol(value, &pEnd, 10);
+          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
+            cfg->RunInterval = (int)lValue;
+          else {
+            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
+            rc = -2;
+          }
+        }
 
 				else if(stricmp(variable, "SQL_Database") == 0)
 					cfg->sqlDatabase = value;
@@ -2677,6 +2766,7 @@ void ShowConfig(Config *cfg)
 		"\nSynchTimeLow=" << cfg->synchTimeLow << \
 		"\nSynchTimeHigh=" << cfg->synchTimeHigh << \
 		"\nSunRSOffset=" << cfg->SunRSOffset << \
+		"\nRunInterval=" << cfg->RunInterval << \
 		"\nDecimalPoint=" << dp2txt(cfg->decimalpoint) << \
 		"\nCSV_Delimiter=" << delim2txt(cfg->delimiter) << \
 		"\nPrecision=" << cfg->precision << \
@@ -3512,4 +3602,3 @@ E_SBFSPOT getDeviceData(InverterData *inv, LriDef lri, uint16_t cmd, Rec40S32 &d
 
     return rc;
 }
-

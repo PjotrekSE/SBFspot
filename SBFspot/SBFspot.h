@@ -232,6 +232,7 @@ typedef struct
 	int		calcMissingSpot;		// 0-1
 	char	DateTimeFormat[32];
 	char	DateFormat[32];
+	int   RunInterval;		// Run interval in minutes, 0 = run once
 	char	TimeFormat[32];
 	int		CSV_Export;
 	int		CSV_Header;
@@ -480,6 +481,16 @@ E_SBFSPOT getInverterWMax(InverterData *inv, Rec40S32 &data);
 E_SBFSPOT setInverterWMax(InverterData *inv, Rec40S32 &data);
 E_SBFSPOT getDeviceData(InverterData *inv, LriDef lri, uint16_t cmd, Rec40S32 &data);
 E_SBFSPOT setDeviceData(InverterData *inv, LriDef lri, uint16_t cmd, Rec40S32 &data);
+inline uint16_t as_milliseconds(struct timespec* ts) {
+	return static_cast<uint16_t>(ts->tv_sec * 1000L + ts->tv_nsec / 1000000L);
+}
+inline struct timespec as_timespec(uint64_t inval) {
+	struct timespec ts;
+	ts.tv_sec  = static_cast<long>(inval) / 1000L;
+	ts.tv_nsec = static_cast<long>((static_cast<long>(inval) - 
+		static_cast<uint16_t>(ts.tv_sec) * 1000L) * 1000000L);
+	return ts;
+}
 
 extern unsigned char CommBuf[COMMBUFSIZE];
 
