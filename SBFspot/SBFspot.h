@@ -48,6 +48,7 @@ DISCLAIMER:
 #include "boost/date_time/local_time/local_time.hpp"
 #include "boost/date_time/gregorian/gregorian.hpp"
 #include "boost/format.hpp"
+#include "boost/filesystem.hpp"
 
 #include "Rec40S32.h"
 
@@ -233,6 +234,8 @@ typedef struct
 	char	DateTimeFormat[32];
 	char	DateFormat[32];
 	int   RunInterval;		// Run interval in minutes, 0 = run once
+	int		RunInterval1;		// Run interval in minutes for SIGUSR1
+	int		RunInterval2;		// Run interval in minutes for SIGUSR2
 	char	TimeFormat[32];
 	int		CSV_Export;
 	int		CSV_Header;
@@ -481,14 +484,14 @@ E_SBFSPOT getInverterWMax(InverterData *inv, Rec40S32 &data);
 E_SBFSPOT setInverterWMax(InverterData *inv, Rec40S32 &data);
 E_SBFSPOT getDeviceData(InverterData *inv, LriDef lri, uint16_t cmd, Rec40S32 &data);
 E_SBFSPOT setDeviceData(InverterData *inv, LriDef lri, uint16_t cmd, Rec40S32 &data);
-inline uint16_t as_milliseconds(struct timespec* ts) {
-	return static_cast<uint16_t>(ts->tv_sec * 1000L + ts->tv_nsec / 1000000L);
+inline uint64_t as_nsecs(const struct timespec* const ts) {
+	return static_cast<uint64_t>(static_cast<uint64_t>(ts->tv_sec) * 1000000000 + ts->tv_nsec);
 }
-inline struct timespec as_timespec(uint64_t inval) {
+inline struct timespec as_timespec(const uint64_t inval) {
 	struct timespec ts;
-	ts.tv_sec  = static_cast<long>(inval) / 1000L;
-	ts.tv_nsec = static_cast<long>((static_cast<long>(inval) - 
-		static_cast<uint16_t>(ts.tv_sec) * 1000L) * 1000000L);
+	ts.tv_sec  = static_cast<long>(static_cast<int64_t>(inval) / 1000000000);
+	ts.tv_nsec = static_cast<long>(static_cast<int64_t>(inval) - 
+		(static_cast<int64_t>(ts.tv_sec) * 1000000000));
 	return ts;
 }
 

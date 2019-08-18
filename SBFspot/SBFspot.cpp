@@ -17,6 +17,7 @@
 	G. Schnuff : SMAdata2® Protocol analyzer
 	T. Frank   : Speedwire® support
 	Snowmiss   : User manual
+	PjotrekSE  : Run continously and reread config
 	All other users for their contribution to the success of this project
 
 	The Windows version of this project is developed using Visual C++ 2010 Express
@@ -101,10 +102,19 @@ bool hasBatteryDevice = false;	// Plant has 1 or more battery device(s)
 // Signal handling public vars
 volatile sig_atomic_t term = 0;
 volatile sig_atomic_t hup  = 0;
+volatile sig_atomic_t usr1 = 0;
+volatile sig_atomic_t usr2 = 0;
 
-// Signal handling funx
-void setTerm(int signum) { term = 1; }
-void setHup( int signum) { hup  = 1; }
+// Signal handling callback func
+void setSig(int signum) { 
+	switch(signum) {
+		case SIGTERM:
+		case SIGINT:  term = 1; break;
+		case SIGHUP:  hup  = 1; break;
+		case SIGUSR1: usr1 = 1; break;
+		case SIGUSR2: usr2 = 1; break;
+	}
+}
 
 int main(int argc, char **argv)
 {
@@ -259,31 +269,32 @@ int main(int argc, char **argv)
 	}
 
 	// Set up signal actions
-	// SIGTERM handling
-  struct sigaction termAction;
-  memset(&termAction, 0, sizeof(struct sigaction));
-  termAction.sa_handler = setTerm;
-  sigaction(SIGTERM, &termAction, NULL);
-  sigaction(SIGINT,  &termAction, NULL);
-
-	// SIGHUP handling
-  struct sigaction hupAction;
-  memset(&hupAction, 0, sizeof(struct sigaction));
-  hupAction.sa_handler = setHup;
-  sigaction(SIGHUP, &hupAction, NULL);
+  struct sigaction sigAction;
+  memset(&sigAction, 0, sizeof(struct sigaction));
+  sigAction.sa_handler = setSig;
+  sigaction(SIGTERM, &sigAction, NULL);
+  sigaction(SIGINT,  &sigAction, NULL);
+  sigaction(SIGHUP,  &sigAction, NULL);
+  sigaction(SIGUSR1, &sigAction, NULL);
+  sigaction(SIGUSR2, &sigAction, NULL);
+	sigset_t sigBlock;
+	sigemptyset (&sigBlock);
+	sigaddset (&sigBlock, SIGHUP);
+	sigaddset (&sigBlock, SIGUSR1);
+	sigaddset (&sigBlock, SIGUSR2);
+	sigprocmask (SIG_SETMASK, &sigBlock, NULL);	// Set our mask
+	sigprocmask (SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
 	
 	// Set up loop timing
+	uint64_t accum = 0;
+  uint16_t loop  = 0;
 	struct timespec ts;
-	uint16_t start; uint16_t ready; uint16_t used; uint16_t remain; uint16_t interval;
-	uint16_t accum    = static_cast<uint16_t>(0);
-  uint16_t loop = 0;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	uint64_t start = as_nsecs(&ts);
+	uint16_t interval = cfg.RunInterval;
 	
   while (!term) {
-		// Get loop start time
-		interval = static_cast<uint16_t>(cfg.RunInterval) * 60000;
-		clock_gettime(CLOCK_REALTIME, &ts);
-		start = as_milliseconds(&ts);
-		// Now do the job!
+		sigprocmask (SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
 		
 	// Synchronize plant time with system time
     // Only BT connected devices and if enabled in config _or_ requested by 123Solar
@@ -741,43 +752,72 @@ int main(int argc, char **argv)
 	#endif
 	}
 
-		// Did we get a sighup? If so, read alternate cfg from tmp
-		if (hup) {
-			hup = 0;
-			cfg.ConfigFile = "/tmp/SBFspot.cfg";
-			rc = GetConfig(&cfg);
-			if (rc != 0) return rc;
+		// Did we get a sighup/sigusrx? If so, read alternate cfg from tmp
+		sigset_t waiting_mask;
+		sigpending (&waiting_mask);
+		if (sigismember(&waiting_mask, SIGHUP)   || 
+		    sigismember(&waiting_mask, SIGUSR1)  || 
+				sigismember(&waiting_mask, SIGUSR2)) {
+			sigprocmask(SIG_UNBLOCK, &sigBlock, NULL);	// Unblock our signals
+			if (hup) {	// Did we get a sighup? If so, read alternate cfg from tmp
+				sigprocmask(SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
+				hup = 0;
+				cfg.ConfigFile = "/tmp/SBFspot.cfg";
+				if (boost::filesystem::is_regular_file(cfg.ConfigFile)) {
+					rc = GetConfig(&cfg);
+					if (rc != 0) return rc;
+					interval = cfg.RunInterval;
+					if (VERBOSE_HIGH) printf("Read SBFspot.cfg from tmp, new RunInterval=%u min\n", cfg.RunInterval);
+				}
+				sigprocmask(SIG_UNBLOCK, &sigBlock, NULL);	// Unblock our signals
+			}
+			if (usr1) {
+				sigprocmask(SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
+				usr1 = 0;
+				interval = cfg.RunInterval1;
+				sigprocmask(SIG_UNBLOCK, &sigBlock, NULL);	// Unblock our signals
+			}
+			if (usr2) {
+				sigprocmask(SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
+				usr2 = 0;
+				interval = cfg.RunInterval2;
+			}
+			sigprocmask(SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
 		}
 		
 		// Loop timing
-		// struct timespec start, ready, used, accum, remain, interval;
-		clock_gettime(CLOCK_REALTIME, &ts);
-		ready  =  as_milliseconds(&ts);
-		used   =  ready - start;
-		accum += used;
-		remain = interval - used;
-		ts = as_timespec(remain);
-		if (VERBOSE_LOW) {
-			printf("lapse=%u used=%u ms, accum=%u ms, remain=%u ms, interv=%u ms\n\n", 
-							loop, used, accum,  remain, interval);
+		clock_gettime(CLOCK_REALTIME, &ts);	// Get NOW
+		uint64_t ready = as_nsecs(&ts);
+		uint64_t used = ready - start;      // Used time
+		accum += used;			 	              // Accumulate used time for stats
+		uint64_t next = start + interval * 60000000000;	// Next run! (This way, there is no drift)
+		uint64_t remain = next - ready;     // Remaining time to next run
+		if (VERBOSE_HIGH) {
+			printf("lapse=%u used=%llu ns, accum=%llu ns, remain=%llu ns, interval=%d min\n\n", 
+							loop, used, accum, remain, interval);
 		}
-		if (interval == 0) { // interval == 0 means run once
+		if (interval == 0) {   // RunInterval == 0 means run once
 			loop = 1;
-			break; 
-		}	
+			break;
+		}
 		
 		// Loop timing handling
-		nanosleep(&ts, NULL);	// Wait till interval elapsed
+		if (remain > 0) {	// Skip sleep if negative remain
+			ts = as_timespec(remain);									           // As timespec for nanosleep
+			nanosleep(&ts, NULL);	// Wait till interval elapsed
+		}
+		
 		loop++;
+		start = next;	// Next start
+		sigprocmask(SIG_UNBLOCK, &sigBlock, NULL);	// Block our signals temporarily
 	}
 	// Loop timing result
-	uint16_t lapse = accum / loop;
-	if (VERBOSE_LOW) printf("Each lapse took %u ms\n", lapse);
+	uint16_t lapse = accum / (loop * 1000000);
+	if (VERBOSE_NORMAL) printf("Each lapse took %u ms\n", lapse);
 	
 	// If MQTT used: sleep 2 sec to make sure all mqtt messages were sent before disconnecting
 	if (cfg.mqtt == 1) {
-		ts.tv_sec = 0; ts.tv_nsec = 2000000L;
-		nanosleep(&ts, NULL);
+		usleep(2000000);
 	}
 
 	if (cfg.ConnectionType == CT_BLUETOOTH)
@@ -2270,6 +2310,8 @@ int GetConfig(Config *cfg)
     cfg->BT_Timeout = 5;
     cfg->BT_ConnectRetries = 10;
 		cfg->RunInterval = 0;
+		cfg->RunInterval1 = 0;
+		cfg->RunInterval2 = 0;
 
     cfg->calcMissingSpot = 0;
     strcpy(cfg->DateTimeFormat, "%d/%m/%Y %H:%M:%S");
@@ -2613,6 +2655,24 @@ int GetConfig(Config *cfg)
             rc = -2;
           }
         }
+        else if(stricmp(variable, "RunInterval1") == 0) {
+          lValue = strtol(value, &pEnd, 10);
+          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
+            cfg->RunInterval = (int)lValue;
+          else {
+            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
+            rc = -2;
+          }
+        }
+        else if(stricmp(variable, "RunInterval2") == 0) {
+          lValue = strtol(value, &pEnd, 10);
+          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
+            cfg->RunInterval = (int)lValue;
+          else {
+            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
+            rc = -2;
+          }
+        }
 
 				else if(stricmp(variable, "SQL_Database") == 0)
 					cfg->sqlDatabase = value;
@@ -2766,6 +2826,8 @@ void ShowConfig(Config *cfg)
 		"\nSynchTimeHigh=" << cfg->synchTimeHigh << \
 		"\nSunRSOffset=" << cfg->SunRSOffset << \
 		"\nRunInterval=" << cfg->RunInterval << \
+		"\nRunInterval1=" << cfg->RunInterval1 << \
+		"\nRunInterval2=" << cfg->RunInterval2 << \
 		"\nDecimalPoint=" << dp2txt(cfg->decimalpoint) << \
 		"\nCSV_Delimiter=" << delim2txt(cfg->delimiter) << \
 		"\nPrecision=" << cfg->precision << \
@@ -3601,4 +3663,3 @@ E_SBFSPOT getDeviceData(InverterData *inv, LriDef lri, uint16_t cmd, Rec40S32 &d
 
     return rc;
 }
-
