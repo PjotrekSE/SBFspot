@@ -65,7 +65,10 @@ DISCLAIMER:
 #include <time.h>
 #include <stdint.h>
 #include <signal.h>
+#include <setjmp.h>
+//*****
 #include <unistd.h>
+//*****
 #include "bluetooth.h"
 #include "Ethernet.h"
 #include "SBFNet.h"
@@ -104,18 +107,55 @@ volatile sig_atomic_t term = 0;
 volatile sig_atomic_t hup  = 0;
 volatile sig_atomic_t usr1 = 0;
 volatile sig_atomic_t usr2 = 0;
+struct sigaction act;
+sigset_t brkSet, chgSet;
+jmp_buf check_chgpar;
 
 // Signal handling callback func
 void setSig(int signum) { 
 	switch(signum) {
 		case SIGTERM:
-		case SIGINT:  term = 1; break;
-		case SIGHUP:  hup  = 1; break;
-		case SIGUSR1: usr1 = 1; break;
-		case SIGUSR2: usr2 = 1; break;
+		case SIGINT:
+			term = 1;
+			break;
+		case SIGHUP:  
+			hup  = 1;
+			longjmp(check_chgpar, signum);
+			break;
+		case SIGUSR1:
+			usr1 = 1;
+			longjmp(check_chgpar, signum);
+			break;
+		case SIGUSR2:
+			usr2 = 1;
+			longjmp(check_chgpar, signum);
+			break;
 	}
 }
 
+// Set up signal actions
+memset(&act, 0, sizeof(struct sigaction));
+act.sa_handler = setSig;
+act.sa_flags = 0;
+sigaction(SIGTERM, &act, NULL);
+sigaction(SIGINT,  &act, NULL);
+sigaction(SIGHUP,  &act, NULL);
+sigaction(SIGUSR1, &act, NULL);
+sigaction(SIGUSR2, &act, NULL);
+
+// Setup signal mask for breaking execution
+sigemptyset(&brkSet);
+sigaddset(&brkSet, SIGTERM);
+sigaddset(&brkSet, SIGINT);
+sigprocmask(SIG_SETMASK, &brkSet, NULL);	// Block our signals temporarily
+
+// Setup signal mask for changing parameters
+sigemptyset(&chgSet);
+sigaddset(&chgSet, SIGHUP);
+sigaddset(&chgSet, SIGUSR1);
+sigaddset(&chgSet, SIGUSR2);
+sigprocmask(SIG_SETMASK, &chgSet, NULL);	// Set our mask
+	
 int main(int argc, char **argv)
 {
     char msg[80];
@@ -268,23 +308,7 @@ int main(int argc, char **argv)
 		return rc;
 	}
 
-	// Set up signal actions
-  struct sigaction sigAction;
-  memset(&sigAction, 0, sizeof(struct sigaction));
-  sigAction.sa_handler = setSig;
-  sigaction(SIGTERM, &sigAction, NULL);
-  sigaction(SIGINT,  &sigAction, NULL);
-  sigaction(SIGHUP,  &sigAction, NULL);
-  sigaction(SIGUSR1, &sigAction, NULL);
-  sigaction(SIGUSR2, &sigAction, NULL);
-	sigset_t sigBlock;
-	sigemptyset (&sigBlock);
-	sigaddset (&sigBlock, SIGHUP);
-	sigaddset (&sigBlock, SIGUSR1);
-	sigaddset (&sigBlock, SIGUSR2);
-	sigprocmask (SIG_SETMASK, &sigBlock, NULL);	// Set our mask
-	sigprocmask (SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
-	
+	sigprocmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
 	// Set up loop timing
 	uint64_t accum = 0;
   uint16_t loop  = 0;
@@ -294,7 +318,8 @@ int main(int argc, char **argv)
 	uint16_t interval = cfg.RunInterval;
 	
   while (!term) {
-		sigprocmask (SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
+		sigprocmask(SIG_BLOCK, &brkSet, NULL);	// Block breaking
+		sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
 		
 	// Synchronize plant time with system time
     // Only BT connected devices and if enabled in config _or_ requested by 123Solar
@@ -753,36 +778,38 @@ int main(int argc, char **argv)
 	}
 
 		// Did we get a sighup/sigusrx? If so, read alternate cfg from tmp
-		sigset_t waiting_mask;
-		sigpending (&waiting_mask);
-		if (sigismember(&waiting_mask, SIGHUP)   || 
-		    sigismember(&waiting_mask, SIGUSR1)  || 
-				sigismember(&waiting_mask, SIGUSR2)) {
-			sigprocmask(SIG_UNBLOCK, &sigBlock, NULL);	// Unblock our signals
-			if (hup) {	// Did we get a sighup? If so, read alternate cfg from tmp
-				sigprocmask(SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
-				hup = 0;
-				cfg.ConfigFile = "/tmp/SBFspot.cfg";
-				if (boost::filesystem::is_regular_file(cfg.ConfigFile)) {
-					rc = GetConfig(&cfg);
-					if (rc != 0) return rc;
-					interval = cfg.RunInterval;
-					if (VERBOSE_HIGH) printf("Read SBFspot.cfg from tmp, new RunInterval=%u min\n", cfg.RunInterval);
-				}
-				sigprocmask(SIG_UNBLOCK, &sigBlock, NULL);	// Unblock our signals
+		sigprocmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
+		sigprocmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
+		// Set longjmp hither!
+		if (setjmp(check_chgpar)) {
+			if (VERBOSE_HIGH) printf("Landed at setjmp\(check_chgpar\) from longjmp");
+		}
+		else {
+			if (VERBOSE_HIGH) printf("Landed at setjmp\(check_chgpar\) normally");
+		}
+		if (hup) {	// Did we get a sighup? If so, read alternate cfg from tmp
+			sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+			hup = 0;
+			cfg.ConfigFile = "/tmp/SBFspot.cfg";
+			if (boost::filesystem::is_regular_file(cfg.ConfigFile)) {
+				rc = GetConfig(&cfg);
+				if (rc != 0) return rc;
+				interval = cfg.RunInterval;
+				if (VERBOSE_HIGH) printf("Read SBFspot.cfg from tmp, new RunInterval=%u min\n", cfg.RunInterval);
 			}
-			if (usr1) {
-				sigprocmask(SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
-				usr1 = 0;
-				interval = cfg.RunInterval1;
-				sigprocmask(SIG_UNBLOCK, &sigBlock, NULL);	// Unblock our signals
-			}
-			if (usr2) {
-				sigprocmask(SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
-				usr2 = 0;
-				interval = cfg.RunInterval2;
-			}
-			sigprocmask(SIG_BLOCK, &sigBlock, NULL);	// Block our signals temporarily
+			sigprocmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
+		}
+		if (usr1) {  // Did we get a sigusr1? If so, set interval1
+			sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+			usr1 = 0;
+			interval = cfg.RunInterval1;
+			sigprocmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
+		}
+		if (usr2) {  // Did we get a sigusr2? If so, set interval2
+			sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+			usr2 = 0;
+			interval = cfg.RunInterval2;
+			sigprocmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		}
 		
 		// Loop timing
@@ -806,10 +833,10 @@ int main(int argc, char **argv)
 			ts = as_timespec(remain);									           // As timespec for nanosleep
 			nanosleep(&ts, NULL);	// Wait till interval elapsed
 		}
+		sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
 		
 		loop++;
 		start = next;	// Next start
-		sigprocmask(SIG_UNBLOCK, &sigBlock, NULL);	// Block our signals temporarily
 	}
 	// Loop timing result
 	uint16_t lapse = accum / (loop * 1000000);
