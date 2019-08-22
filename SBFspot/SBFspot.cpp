@@ -63,12 +63,11 @@ DISCLAIMER:
 #include <limits.h>
 #include <math.h>
 #include <time.h>
-#include <stdint.h>
-#include <signal.h>
-#include <setjmp.h>
-//*****
-#include <unistd.h>
-//*****
+//#include <stdint.h>	//****
+#include <signal.h>	//****
+//#include <stdlib.h>	//****
+#include <setjmp.h>	//****
+//#include <unistd.h>	//****
 #include "bluetooth.h"
 #include "Ethernet.h"
 #include "SBFNet.h"
@@ -107,11 +106,9 @@ volatile sig_atomic_t term = 0;
 volatile sig_atomic_t hup  = 0;
 volatile sig_atomic_t usr1 = 0;
 volatile sig_atomic_t usr2 = 0;
-struct sigaction act;
-sigset_t brkSet, chgSet;
-jmp_buf check_chgpar;
 
 // Signal handling callback func
+jmp_buf check_chgpar;	// Needed for signal's unortodox returns
 void setSig(int signum) { 
 	switch(signum) {
 		case SIGTERM:
@@ -133,31 +130,35 @@ void setSig(int signum) {
 	}
 }
 
-// Set up signal actions
-memset(&act, 0, sizeof(struct sigaction));
-act.sa_handler = setSig;
-act.sa_flags = 0;
-sigaction(SIGTERM, &act, NULL);
-sigaction(SIGINT,  &act, NULL);
-sigaction(SIGHUP,  &act, NULL);
-sigaction(SIGUSR1, &act, NULL);
-sigaction(SIGUSR2, &act, NULL);
-
-// Setup signal mask for breaking execution
-sigemptyset(&brkSet);
-sigaddset(&brkSet, SIGTERM);
-sigaddset(&brkSet, SIGINT);
-sigprocmask(SIG_SETMASK, &brkSet, NULL);	// Block our signals temporarily
-
-// Setup signal mask for changing parameters
-sigemptyset(&chgSet);
-sigaddset(&chgSet, SIGHUP);
-sigaddset(&chgSet, SIGUSR1);
-sigaddset(&chgSet, SIGUSR2);
-sigprocmask(SIG_SETMASK, &chgSet, NULL);	// Set our mask
-	
 int main(int argc, char **argv)
 {
+	// Signal handling cannot be done at global scope
+	struct sigaction sa;
+	sigset_t brkSet, chgSet;
+	
+	// Set up signal actions
+	std::memset(&sa, 0, sizeof(struct sigaction));
+	sa.sa_handler = setSig;
+	sa.sa_flags = 0;
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT,  &sa, NULL);
+	sigaction(SIGHUP,  &sa, NULL);
+	sigaction(SIGUSR1, &sa, NULL);
+	sigaction(SIGUSR2, &sa, NULL);
+
+	// Setup signal mask for breaking execution
+	sigemptyset(&brkSet);
+	sigaddset(&brkSet, SIGTERM);
+	sigaddset(&brkSet, SIGINT);
+	sigprocmask(SIG_SETMASK, &brkSet, NULL);	// Block our signals for now
+
+	// Setup signal mask for changing parameters
+	sigemptyset(&chgSet);
+	sigaddset(&chgSet, SIGHUP);
+	sigaddset(&chgSet, SIGUSR1);
+	sigaddset(&chgSet, SIGUSR2);
+	sigprocmask(SIG_SETMASK, &chgSet, NULL);	// Block our signals for now
+
     char msg[80];
 
     int rc = 0;
@@ -307,6 +308,9 @@ int main(int argc, char **argv)
 
 		return rc;
 	}
+	#if defined(USE_SQLITE) || defined(USE_MYSQL)
+	db_SQL_Export db;
+	#endif
 
 	sigprocmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
 	// Set up loop timing
@@ -606,10 +610,11 @@ int main(int argc, char **argv)
 		ExportBatteryDataToCSV(&cfg, Inverters);
 
 	#if defined(USE_SQLITE) || defined(USE_MYSQL)
-	db_SQL_Export db = db_SQL_Export();
+	db = db_SQL_Export();
 	if (!cfg.nosql)
 	{
-		db.open(cfg.sqlHostname, cfg.sqlUsername, cfg.sqlUserPassword, cfg.sqlDatabase);
+		if (!db.isopen())
+			db.open(cfg.sqlHostname, cfg.sqlUsername, cfg.sqlUserPassword, cfg.sqlDatabase);
 		if (db.isopen())
 		{
 			time_t spottime = time(NULL);
@@ -782,10 +787,10 @@ int main(int argc, char **argv)
 		sigprocmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		// Set longjmp hither!
 		if (setjmp(check_chgpar)) {
-			if (VERBOSE_HIGH) printf("Landed at setjmp\(check_chgpar\) from longjmp");
+			if (VERBOSE_HIGH) printf("Landed at setjmp(check_chgpar) from longjmp");
 		}
 		else {
-			if (VERBOSE_HIGH) printf("Landed at setjmp\(check_chgpar\) normally");
+			if (VERBOSE_HIGH) printf("Landed at setjmp(check_chgpar) normally");
 		}
 		if (hup) {	// Did we get a sighup? If so, read alternate cfg from tmp
 			sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
