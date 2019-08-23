@@ -1,0 +1,54 @@
+Readme file for run continuously and alternate config features
+==============================================================
+
+Four new parameters were added to the config file:
+
+# RunInterval
+# Run interval in minutes, must be >= 0, 0 means run once
+RunInterval=5
+
+# Alternate config for SIGHUP
+AltConfig=/tmp/SBFspot.cfg
+
+# Run interval for SIGUSR1
+RunInterval1=0
+
+# Run interval for SIGUSR2
+RunInterval2=0
+
+
+Using the parameter RunInterval, it is possible to run SBFspot at 
+regular intervals from 1 to 300 minutes. A RunInterval of 0 means a
+one-shot operation, that is, just as before.
+
+It is possible to set two alternate intervals with RunInterval1 and
+RunInterval2. These intervals can then be activated by sending
+SIGUSR1 and SIGUSR2 to the SBFspot process, respectively. This can be
+achieved by the Linux command: 'pkill -USR1 SBFspot'. Exchange USR2 for
+USR1 as desired.
+SBFspot will then update the interval time, and immediately reset the
+loop timing to the new value. If the new loop value is < 0, a processing
+loop will be started immediately.
+SBFspot will show no drift in execution times over longer time, as it
+will always start on the same nanosecond, except for the case where loop
+time was negative as a consequence of a change. On the next lapse, however,
+it  will continue starting on the same nanosecond as before.
+A slight variation will occur, due to influence by other tasks. However,
+the long time stability will remain the same.
+
+It is also possible to make SBFspot reread the entire config file from
+an alternate location, specified by the AltConfig parameter. To activate
+this, run Linux command: 'pkill -HUP SBFspot'.
+
+To end the continuously running SBFspot, run Linux command: 
+ 'pkill -TERM SBFspot', or just pressing Ctrl-C. SBFspot will then finish
+immediately if it was in a waiting state, otherwise as soon as current
+processing loop is finished.
+ 
+The advantage of running SBFspot continuously/periodically is eliminating
+the overhead of reconnecting and disconnecting from inverter and databases,
+if databases are used. Even greater advantages when using MQTT would be won
+if MQTT was integrated using available C/C++ MQTT libraries. Then lapse
+time could be reduced from 1.7 to 0.4 seconds on a Raspberry Pi 3B+.
+
+A lapse timing will be shown with verbose >= 2.
