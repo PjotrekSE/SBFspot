@@ -233,10 +233,13 @@ typedef struct
 	int		calcMissingSpot;		// 0-1
 	char	DateTimeFormat[32];
 	char	DateFormat[32];
-	int   RunInterval;		// Run interval in minutes, 0 = run once
-	int		RunInterval1;		// Run interval in minutes for SIGUSR1
-	int		RunInterval2;		// Run interval in minutes for SIGUSR2
 	char	TimeFormat[32];
+		// Values for run continuously
+	int   RunInterval;	// Run interval in minutes, 0 = run once
+	std::string AltConfig;	// Fullpath to alternate config file for SIGHUP
+	int		RunInterval1;	// Run interval in minutes for SIGUSR1
+	int		RunInterval2;	// Run interval in minutes for SIGUSR2
+	
 	int		CSV_Export;
 	int		CSV_Header;
 	int		CSV_ExtendedHeader;

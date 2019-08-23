@@ -63,11 +63,8 @@ DISCLAIMER:
 #include <limits.h>
 #include <math.h>
 #include <time.h>
-//#include <stdint.h>	//****
-#include <signal.h>	//****
-//#include <stdlib.h>	//****
-#include <setjmp.h>	//****
-//#include <unistd.h>	//****
+#include <signal.h>
+#include <setjmp.h>
 #include "bluetooth.h"
 #include "Ethernet.h"
 #include "SBFNet.h"
@@ -100,6 +97,7 @@ char DateFormat[32];
 CONNECTIONTYPE ConnType = CT_NONE;
 TagDefs tagdefs = TagDefs();
 bool hasBatteryDevice = false;	// Plant has 1 or more battery device(s)
+bool pthread = false;	// Linked with pthread?
 
 // Signal handling public vars
 volatile sig_atomic_t term = 0;
@@ -107,28 +105,42 @@ volatile sig_atomic_t hup  = 0;
 volatile sig_atomic_t usr1 = 0;
 volatile sig_atomic_t usr2 = 0;
 
-// Signal handling callback func
-jmp_buf check_chgpar;	// Needed for signal's unortodox returns
+// Signal handling callback function
+jmp_buf check_chgpar;	// Needed for signal's unorthodox returns
 void setSig(int signum) { 
 	switch(signum) {
 		case SIGTERM:
 		case SIGINT:
+		case SIGQUIT:
+			if (DEBUG_LOW) printf("In setSig: Received SIGTERM/INT/QUIT\n");
 			term = 1;
 			break;
 		case SIGHUP:  
 			hup  = 1;
-			longjmp(check_chgpar, signum);
-			break;
+			if (DEBUG_LOW) printf("In setSig: Received SIGHUP\n");
+			signal(signum, setSig);	// re-enable the signal
+			longjmp(check_chgpar, signum);	// Return to test for change signals in loop
+			break;	// Not needed
 		case SIGUSR1:
 			usr1 = 1;
+			if (DEBUG_LOW) printf("In setSig: Received SIGUSR1\n");
+			signal(signum, setSig);
 			longjmp(check_chgpar, signum);
 			break;
 		case SIGUSR2:
 			usr2 = 1;
+			if (DEBUG_LOW) printf("In setSig: Received SIGUSR2\n");
+			signal(signum, setSig);
 			longjmp(check_chgpar, signum);
 			break;
+			if (DEBUG_LOW) printf("In setSig: Received unknown signal\n");
+		default:
+			break;
 	}
+	signal(signum, setSig);	// re-enable
 }
+//pthread_t pt = pthread_self();
+//printf("Global pthread_self=%#010x\n", (uint64_t)pt);
 
 int main(int argc, char **argv)
 {
@@ -136,7 +148,30 @@ int main(int argc, char **argv)
 	struct sigaction sa;
 	sigset_t brkSet, chgSet;
 	
-	// Set up signal actions
+	// Setup signal mask for breaking execution
+	// When linked with pthread use pthread_sigmask
+	//	throughout the program, otherwise use sigprocmask.
+	//	Everything else stays the same.
+
+	// Check if pthread library used
+	#ifndef _PTHREAD_H
+		#define pthread_sigmask sigprocmask
+	#endif
+	
+	sigemptyset(&brkSet);
+	sigaddset(&brkSet, SIGTERM);
+	sigaddset(&brkSet, SIGINT);
+	sigaddset(&brkSet, SIGQUIT);
+	pthread_sigmask(SIG_SETMASK, &brkSet, NULL);	// Block break signals for now
+
+	// Setup signal mask for changing parameters
+	sigemptyset(&chgSet);
+	sigaddset(&chgSet, SIGHUP);
+	sigaddset(&chgSet, SIGUSR1);
+	sigaddset(&chgSet, SIGUSR2);
+	pthread_sigmask(SIG_SETMASK, &chgSet, NULL);	// Block change signals for now
+
+	// Set up signal action handler
 	std::memset(&sa, 0, sizeof(struct sigaction));
 	sa.sa_handler = setSig;
 	sa.sa_flags = 0;
@@ -145,19 +180,6 @@ int main(int argc, char **argv)
 	sigaction(SIGHUP,  &sa, NULL);
 	sigaction(SIGUSR1, &sa, NULL);
 	sigaction(SIGUSR2, &sa, NULL);
-
-	// Setup signal mask for breaking execution
-	sigemptyset(&brkSet);
-	sigaddset(&brkSet, SIGTERM);
-	sigaddset(&brkSet, SIGINT);
-	sigprocmask(SIG_SETMASK, &brkSet, NULL);	// Block our signals for now
-
-	// Setup signal mask for changing parameters
-	sigemptyset(&chgSet);
-	sigaddset(&chgSet, SIGHUP);
-	sigaddset(&chgSet, SIGUSR1);
-	sigaddset(&chgSet, SIGUSR2);
-	sigprocmask(SIG_SETMASK, &chgSet, NULL);	// Block our signals for now
 
     char msg[80];
 
@@ -173,7 +195,7 @@ int main(int argc, char **argv)
     //Read config file and store settings in config struct
     rc = GetConfig(&cfg);	//Config struct contains fullpath to config file
     if (rc != 0) return rc;
-
+		
     //Copy some config settings to public variables
     debug = cfg.debug;
     verbose = cfg.verbose;
@@ -312,19 +334,19 @@ int main(int argc, char **argv)
 	db_SQL_Export db;
 	#endif
 
-	sigprocmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
 	// Set up loop timing
 	uint64_t accum = 0;
   uint16_t loop  = 0;
+	uint16_t interval = cfg.RunInterval;
 	struct timespec ts;
 	clock_gettime(CLOCK_REALTIME, &ts);
+	pthread_sigmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
 	uint64_t start = as_nsecs(&ts);
-	uint16_t interval = cfg.RunInterval;
 	
-  while (!term) {
-		sigprocmask(SIG_BLOCK, &brkSet, NULL);	// Block breaking
-		sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
-		
+  while (!term) {	// Here we check if break was signalled
+		pthread_sigmask(SIG_BLOCK, &brkSet, NULL);	// Block breaking
+		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+		if (DEBUG_LOW) printf("Start of loop lapse=%u, interval=%u\n", loop, interval);
 	// Synchronize plant time with system time
     // Only BT connected devices and if enabled in config _or_ requested by 123Solar
 	// Most probably Speedwire devices get their time from the local IP network
@@ -630,8 +652,7 @@ int main(int argc, char **argv)
 	/*******
 	* MQTT *
 	********/
-	if (cfg.mqtt == 1) // MQTT enabled
-	{
+	if (cfg.mqtt == 1) {// MQTT enabled
 		rc = mqtt_publish(&cfg, Inverters);
 		if (rc != 0)
 		{
@@ -782,39 +803,49 @@ int main(int argc, char **argv)
 	#endif
 	}
 
-		// Did we get a sighup/sigusrx? If so, read alternate cfg from tmp
-		sigprocmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
-		sigprocmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
+		// Check for parameter change signalling
+		if (DEBUG_LOW) printf("Unblocking signals\n");
+		pthread_sigmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
+		pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		// Set longjmp hither!
 		if (setjmp(check_chgpar)) {
-			if (VERBOSE_HIGH) printf("Landed at setjmp(check_chgpar) from longjmp");
+			if (DEBUG_LOW) printf("Landed at setjmp(check_chgpar) from longjmp\n");
 		}
 		else {
-			if (VERBOSE_HIGH) printf("Landed at setjmp(check_chgpar) normally");
+			if (DEBUG_LOW) printf("Landed at setjmp(check_chgpar) normally\n");
 		}
 		if (hup) {	// Did we get a sighup? If so, read alternate cfg from tmp
-			sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+			pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
 			hup = 0;
-			cfg.ConfigFile = "/tmp/SBFspot.cfg";
-			if (boost::filesystem::is_regular_file(cfg.ConfigFile)) {
+			std::string altcfg = cfg.AltConfig;
+			if (boost::filesystem::is_regular_file(altcfg)) {
+				cfg.ConfigFile = altcfg;
 				rc = GetConfig(&cfg);
 				if (rc != 0) return rc;
 				interval = cfg.RunInterval;
-				if (VERBOSE_HIGH) printf("Read SBFspot.cfg from tmp, new RunInterval=%u min\n", cfg.RunInterval);
+				if (DEBUG_LOW) printf("Processed SIGHUP, interval=%u\n", interval);
+				if ((VERBOSE_HIGH) || (DEBUG_LOW)) 
+						printf("Read alternate config file, new run interval=%u min\n", interval);
+				if (DEBUG_LOW) printf("Alternate config file='%s'\n", altcfg.c_str());
 			}
-			sigprocmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
+			else {
+				if (quiet == 0) printf("No config file in '%s' - ignoring SIGHUP\n",altcfg.c_str());
+			}
+			pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		}
 		if (usr1) {  // Did we get a sigusr1? If so, set interval1
-			sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+			pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
 			usr1 = 0;
 			interval = cfg.RunInterval1;
-			sigprocmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
+			if (DEBUG_LOW) printf("Processed SIGUSR1, interval=%u\n", interval);
+			pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		}
 		if (usr2) {  // Did we get a sigusr2? If so, set interval2
-			sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+			pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
 			usr2 = 0;
 			interval = cfg.RunInterval2;
-			sigprocmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
+			if (DEBUG_LOW) printf("Processed SIGUSR2, interval=%u\n", interval);
+			pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		}
 		
 		// Loop timing
@@ -824,9 +855,10 @@ int main(int argc, char **argv)
 		accum += used;			 	              // Accumulate used time for stats
 		uint64_t next = start + interval * 60000000000;	// Next run! (This way, there is no drift)
 		uint64_t remain = next - ready;     // Remaining time to next run
-		if (VERBOSE_HIGH) {
-			printf("lapse=%u used=%llu ns, accum=%llu ns, remain=%llu ns, interval=%d min\n\n", 
-							loop, used, accum, remain, interval);
+		if ((VERBOSE_HIGH) || (DEBUG_LOW)) {
+			printf("lapse=%u used=%.3f ns, accum=%.3f ns, remain=%.3f ns, interval=%d min\n\n", 
+							loop, (double)used/1000000000, (double)accum/1000000000, 
+							(double)remain/1000000000, interval);
 		}
 		if (interval == 0) {   // RunInterval == 0 means run once
 			loop = 1;
@@ -835,17 +867,22 @@ int main(int argc, char **argv)
 		
 		// Loop timing handling
 		if (remain > 0) {	// Skip sleep if negative remain
-			ts = as_timespec(remain);									           // As timespec for nanosleep
+			ts = as_timespec(remain);	// As timespec for nanosleep
+			// Below is where we normally get our signals,
+			//	loop normally takes less than half asecond, 
+			//	with mqtt about 1.5 seconds, and here we wait for minutes
+			if (DEBUG_LOW) printf("Sleeping %.1f sec\n", (double)remain/1000000000);
 			nanosleep(&ts, NULL);	// Wait till interval elapsed
 		}
-		sigprocmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
 		
 		loop++;
 		start = next;	// Next start
 	}
+	if (DEBUG_LOW) printf("Quit looping, lapse=%d\n", loop);
 	// Loop timing result
 	uint16_t lapse = accum / (loop * 1000000);
-	if (VERBOSE_NORMAL) printf("Each lapse took %u ms\n", lapse);
+	if ((VERBOSE_HIGH) || (DEBUG_LOW)) printf("Each lapse took %u ms\n", lapse);
 	
 	// If MQTT used: sleep 2 sec to make sure all mqtt messages were sent before disconnecting
 	if (cfg.mqtt == 1) {
@@ -2341,15 +2378,17 @@ int GetConfig(Config *cfg)
     cfg->decimalpoint = ',';
     cfg->BT_Timeout = 5;
     cfg->BT_ConnectRetries = 10;
-		cfg->RunInterval = 0;
-		cfg->RunInterval1 = 0;
-		cfg->RunInterval2 = 0;
-
     cfg->calcMissingSpot = 0;
     strcpy(cfg->DateTimeFormat, "%d/%m/%Y %H:%M:%S");
     strcpy(cfg->DateFormat, "%d/%m/%Y");
     strcpy(cfg->TimeFormat, "%H:%M:%S");
     cfg->synchTime = 1;
+		// Values for run continuously
+		cfg->RunInterval = 0;
+		cfg->RunInterval = 0;
+		cfg->AltConfig = "";
+		cfg->RunInterval2 = 0;
+		
     cfg->CSV_Export = 1;
     cfg->CSV_ExtendedHeader = 1;
     cfg->CSV_Header = 1;
@@ -2677,35 +2716,6 @@ int GetConfig(Config *cfg)
 						return -2;
 					}
 				}
-				// Run interval in minutes, must be >= 0, 0 means run once
-        else if(stricmp(variable, "RunInterval") == 0) {
-          lValue = strtol(value, &pEnd, 10);
-          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
-            cfg->RunInterval = (int)lValue;
-          else {
-            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
-            rc = -2;
-          }
-        }
-        else if(stricmp(variable, "RunInterval1") == 0) {
-          lValue = strtol(value, &pEnd, 10);
-          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
-            cfg->RunInterval = (int)lValue;
-          else {
-            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
-            rc = -2;
-          }
-        }
-        else if(stricmp(variable, "RunInterval2") == 0) {
-          lValue = strtol(value, &pEnd, 10);
-          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
-            cfg->RunInterval = (int)lValue;
-          else {
-            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
-            rc = -2;
-          }
-        }
-
 				else if(stricmp(variable, "SQL_Database") == 0)
 					cfg->sqlDatabase = value;
 #if defined(USE_MYSQL)
@@ -2742,6 +2752,37 @@ int GetConfig(Config *cfg)
 						rc = -2;
 					}
 				}
+
+				// Run interval in minutes, must be >= 0, 0 means run once
+        else if(stricmp(variable, "RunInterval") == 0) {
+          lValue = strtol(value, &pEnd, 10);
+          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
+            cfg->RunInterval = (int)lValue;
+         else {
+            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
+            rc = -2;
+          }
+        }
+				else if(stricmp(variable, "AltConfig") == 0)
+					cfg->AltConfig = value;
+        else if(stricmp(variable, "RunInterval1") == 0) {
+          lValue = strtol(value, &pEnd, 10);
+          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
+            cfg->RunInterval1 = (int)lValue;
+          else {
+            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
+            rc = -2;
+          }
+        }
+        else if(stricmp(variable, "RunInterval2") == 0) {
+          lValue = strtol(value, &pEnd, 10);
+          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
+            cfg->RunInterval2 = (int)lValue;
+          else {
+            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
+            rc = -2;
+          }
+        }
 
 				// Add more config keys here
 
@@ -2858,6 +2899,7 @@ void ShowConfig(Config *cfg)
 		"\nSynchTimeHigh=" << cfg->synchTimeHigh << \
 		"\nSunRSOffset=" << cfg->SunRSOffset << \
 		"\nRunInterval=" << cfg->RunInterval << \
+		"\nAltConfig=" << cfg->RunInterval << \
 		"\nRunInterval1=" << cfg->RunInterval1 << \
 		"\nRunInterval2=" << cfg->RunInterval2 << \
 		"\nDecimalPoint=" << dp2txt(cfg->decimalpoint) << \
