@@ -884,10 +884,11 @@ int main(int argc, char **argv)
 	uint16_t lapse = accum / (loop * 1000000);
 	if ((VERBOSE_HIGH) || (DEBUG_LOW)) printf("Each lapse took %u ms\n", lapse);
 	
+	// Only needed when running MQTT publisher asynchronously
 	// If MQTT used: sleep 2 sec to make sure all mqtt messages were sent before disconnecting
-	if (cfg.mqtt == 1) {
-		usleep(2000000);
-	}
+	//if (cfg.mqtt == 1) {
+	//	usleep(2000000);
+	//}
 
 	if (cfg.ConnectionType == CT_BLUETOOTH)
 		logoffSMAInverter(Inverters[0]);
