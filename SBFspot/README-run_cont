@@ -59,6 +59,10 @@ running every 5 minutes when the car is fully charged.
 It appears that at least my inverter honors at a maximum 60 queries per
 hour; trying more than that results in 'Connection denied'.
 Thus, it makes no sense in having an interval smaller than a minute.
+
+A .service file is provided for running SBFspot as a service under Linux.
+See text inside service file for how to use it, and study man page 
+for 'systemctl'.
  
 The advantage of running SBFspot continuously/periodically is eliminating
 the overhead of reconnecting and disconnecting from inverter and databases,

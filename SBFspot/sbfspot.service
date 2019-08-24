@@ -1,0 +1,26 @@
+# To be installed in /usr/lib/systemd/system/
+# Permissions 664, owned by root:root
+# Must use run-continuously-version of SBFspot with
+#  option RunInterval set to nonzero in config file
+# Use special config file (see below) for the service,
+#  making SBFspot as quiet as possible. Deactivate all
+#  unneccesary options, for instance csv or db downloads.
+
+[Unit]
+Description=SBFspot server
+After=network.target
+
+[Service]
+Type=simple
+PIDFile=/var/run/sbfspot.pid
+ExecStart=/usr/local/bin/sbfspot.3/SBFspot -d1 -v2 -ad0 -am0 -ae0 -q -nocsv -nosql -sp0 -cfgSBFspot-svc.cfg
+ExecStop=/bin/kill -s TERM $MAINPID
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-abort
+RestartSec=10
+#TimeoutStartSec=10
+KillMode=process
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
