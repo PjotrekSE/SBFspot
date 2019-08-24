@@ -48,7 +48,6 @@ DISCLAIMER:
 #include "boost/date_time/local_time/local_time.hpp"
 #include "boost/date_time/gregorian/gregorian.hpp"
 #include "boost/format.hpp"
-#include "boost/filesystem.hpp"
 
 #include "Rec40S32.h"
 
@@ -234,7 +233,8 @@ typedef struct
 	char	DateTimeFormat[32];
 	char	DateFormat[32];
 	char	TimeFormat[32];
-		// Values for run continuously
+	
+	// Values for run continuously
 	int   RunInterval;	// Run interval in minutes, 0 = run once
 	std::string AltConfig;	// Fullpath to alternate config file for SIGHUP
 	int		RunInterval1;	// Run interval in minutes for SIGUSR1

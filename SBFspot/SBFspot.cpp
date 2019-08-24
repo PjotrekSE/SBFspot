@@ -75,6 +75,7 @@ DISCLAIMER:
 #include "SQLselect.h"
 #include <boost/algorithm/string.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/filesystem.hpp>
 #include "mqtt.h"
 
 using namespace std;
@@ -97,7 +98,6 @@ char DateFormat[32];
 CONNECTIONTYPE ConnType = CT_NONE;
 TagDefs tagdefs = TagDefs();
 bool hasBatteryDevice = false;	// Plant has 1 or more battery device(s)
-bool pthread = false;	// Linked with pthread?
 
 // Signal handling public vars
 volatile sig_atomic_t term = 0;
@@ -139,8 +139,6 @@ void setSig(int signum) {
 	}
 	signal(signum, setSig);	// re-enable
 }
-//pthread_t pt = pthread_self();
-//printf("Global pthread_self=%#010x\n", (uint64_t)pt);
 
 int main(int argc, char **argv)
 {
@@ -195,7 +193,7 @@ int main(int argc, char **argv)
     //Read config file and store settings in config struct
     rc = GetConfig(&cfg);	//Config struct contains fullpath to config file
     if (rc != 0) return rc;
-		
+
     //Copy some config settings to public variables
     debug = cfg.debug;
     verbose = cfg.verbose;
@@ -652,7 +650,8 @@ int main(int argc, char **argv)
 	/*******
 	* MQTT *
 	********/
-	if (cfg.mqtt == 1) {// MQTT enabled
+	if (cfg.mqtt == 1) // MQTT enabled
+	{
 		rc = mqtt_publish(&cfg, Inverters);
 		if (rc != 0)
 		{
@@ -2379,17 +2378,19 @@ int GetConfig(Config *cfg)
     cfg->decimalpoint = ',';
     cfg->BT_Timeout = 5;
     cfg->BT_ConnectRetries = 10;
+
     cfg->calcMissingSpot = 0;
     strcpy(cfg->DateTimeFormat, "%d/%m/%Y %H:%M:%S");
     strcpy(cfg->DateFormat, "%d/%m/%Y");
     strcpy(cfg->TimeFormat, "%H:%M:%S");
     cfg->synchTime = 1;
-		// Values for run continuously
-		cfg->RunInterval = 0;
-		cfg->RunInterval = 0;
-		cfg->AltConfig = "";
-		cfg->RunInterval2 = 0;
-		
+
+    // Values for run continuously
+    cfg->RunInterval = 0;
+    cfg->RunInterval = 0;
+    cfg->AltConfig = "";
+    cfg->RunInterval2 = 0;
+
     cfg->CSV_Export = 1;
     cfg->CSV_ExtendedHeader = 1;
     cfg->CSV_Header = 1;
@@ -2717,6 +2718,7 @@ int GetConfig(Config *cfg)
 						return -2;
 					}
 				}
+
 				else if(stricmp(variable, "SQL_Database") == 0)
 					cfg->sqlDatabase = value;
 #if defined(USE_MYSQL)
@@ -3738,3 +3740,4 @@ E_SBFSPOT getDeviceData(InverterData *inv, LriDef lri, uint16_t cmd, Rec40S32 &d
 
     return rc;
 }
+
