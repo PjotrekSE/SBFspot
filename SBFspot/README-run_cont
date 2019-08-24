@@ -44,6 +44,21 @@ To end the continuously running SBFspot, run Linux command:
  'pkill -TERM SBFspot', or just pressing Ctrl-C. SBFspot will then finish
 immediately if it was in a waiting state, otherwise as soon as current
 processing loop is finished.
+
+All these signals may of course also be sent from programs. Check the
+documentation for 'signal' for your favourite languages. 
+Node Red also has a node that can be used for this purpose.
+
+There are many uses for features like this. In my setting, SBFspot
+normally runs every 5 minutes. But when I switch on the charger for my
+hybrid car in the 'MQTT Dash' app, a Node Red flow sends a USR1 signal
+to run SBFspot every minute, to use as much sun energy as possible,
+and as little as possible from the grid, and a USR2 signal to revert
+running every 5 minutes when the car is fully charged.
+
+It appears that at least my inverter honors at a maximum 60 queries per
+hour; trying more than that results in 'Connection denied'.
+Thus, it makes no sense in having an interval smaller than a minute.
  
 The advantage of running SBFspot continuously/periodically is eliminating
 the overhead of reconnecting and disconnecting from inverter and databases,
