@@ -337,11 +337,11 @@ int main(int argc, char **argv)
 	#endif
 
 	// Set up loop timing
-	uint64_t accum  = 0;
+	int64_t  accum  = 0;
+	int64_t  used   = 0;
+	int64_t  remain = 0;
 	uint64_t ready  = 0;
-	uint64_t used   = 0;
 	uint64_t next   = 0;
-	uint64_t remain = 0;
   uint16_t loop   = 0;
 	uint16_t interval = cfg.RunInterval;
 	struct timespec ts;
@@ -869,14 +869,15 @@ int main(int argc, char **argv)
 		ready = as_nsecs(&ts);
 		if (!vialj) {
 			used = ready - start;      // Used time
-			accum += used;			 	              // Accumulate used time for stats
+			if (used < 0) printf("This should never happen: used=%.3f<0\n", as_dbleSec(used));
+			accum += used;			 	     // Accumulate used time for stats
 		}
 		next = start + interval * 60000000000;	// Next run! (This way, there is no drift)
 		remain = next - ready;     // Remaining time to next run
 		if ((VERBOSE_HIGH) || (DEBUG_LOW)) {
 			printf("lapse=%u used=%.3f s, accum=%.3f s, remain=%.3f s, interval=%d min\n\n", 
-							loop, (double)used/1000000000, (double)accum/1000000000, 
-							(double)remain/1000000000, interval);
+							loop, as_dbleSec(used), as_dbleSec(accum), 
+							as_dbleSec(remain), interval);
 		}
 		if (interval == 0) {   // RunInterval == 0 means run once
 			loop = 1;
@@ -889,7 +890,7 @@ int main(int argc, char **argv)
 			// Below is where we normally get our signals,
 			//	loop normally takes less than half asecond, 
 			//	with mqtt about 1.5 seconds, and here we wait for minutes
-			if (DEBUG_LOW) printf("Sleeping %.1f sec\n", (double)remain/1000000000);
+			if (DEBUG_LOW) printf("Sleeping %.1f sec\n", as_dbleSec(remain));
 			nanosleep(&ts, NULL);	// Wait till interval elapsed
 		}
 		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
@@ -900,8 +901,8 @@ int main(int argc, char **argv)
 	}
 	if (DEBUG_LOW) printf("Quit looping, lapse=%d\n", loop);
 	// Loop timing result
-	uint16_t lapse = accum / (loop * 1000000000);
-	if ((VERBOSE_HIGH) || (DEBUG_LOW)) printf("Each lapse took %.1f s\n", (double)lapse/1000000000);
+	int16_t lapse = accum / (loop * 1000000000);
+	if ((VERBOSE_HIGH) || (DEBUG_LOW)) printf("Each lapse took %.1f s\n", as_dbleSec(lapse));
 	
 	// Only needed when running MQTT publisher asynchronously
 	// If MQTT used: sleep 2 sec to make sure all mqtt messages were sent before disconnecting

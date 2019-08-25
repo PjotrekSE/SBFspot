@@ -62,10 +62,11 @@ Thus, it makes no sense in having an interval smaller than a minute.
 
 A .service file is provided for running SBFspot as a service under Linux.
 See text inside service file for how to use it, and study man page 
-for 'systemctl'. If you want to get some output from the service, you
-may want to redirect output to a logfile. A good description of how to
-achieve this may be found at:
-https://stackoverflow.com/questions/37585758/how-to-redirect-output-of-systemd-service-to-a-file
+for 'systemctl'. If you want output from SBFspot, enable optopns as
+preferred in the service file. Output may be inspected by the command
+'sudo journalctl -efu sbfspot.service' . If you want SBFspot's output to
+a separate logile and your system uses rsyslog, copy sbfspot.conf to 
+/etc/rsyslog.d .
  
 The advantage of running SBFspot continuously/periodically is eliminating
 the overhead of reconnecting and disconnecting from inverter and databases,

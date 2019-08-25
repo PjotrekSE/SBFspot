@@ -5,6 +5,8 @@
 # Use special config file (see below) for the service,
 #  making SBFspot as quiet as possible. Deactivate all
 #  unneccesary options, for instance csv or db downloads.
+# If wanting output, enable as preferred. Inspect stdoutput
+#  with command 'sudo journalctl -efu sbfspot.service' .
 
 [Unit]
 Description=SBFspot server
@@ -17,7 +19,7 @@ PIDFile=/var/run/sbfspot.pid
 ExecStart=/usr/local/bin/sbfspot.3/SBFspot -d1 -v2 -ad0 -am0 -ae0 -q -nocsv -nosql -sp0 -cfgSBFspot-svc.cfg -mqtt
 ExecStop=/bin/kill -s TERM $MAINPID
 ExecReload=/bin/kill -s HUP $MAINPID
-Restart=on-abort
+Restart=on-fail
 RestartSec=10
 TimeoutStartSec=10
 KillMode=process

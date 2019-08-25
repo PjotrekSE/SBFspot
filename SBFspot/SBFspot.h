@@ -497,6 +497,8 @@ inline struct timespec as_timespec(const uint64_t inval) {
 		(static_cast<int64_t>(ts.tv_sec) * 1000000000));
 	return ts;
 }
+// As a macro to avoid typechecking of inp
+#define as_dbleSec(inp) static_cast<double>(inp)/1000000000.
 
 extern unsigned char CommBuf[COMMBUFSIZE];
 
