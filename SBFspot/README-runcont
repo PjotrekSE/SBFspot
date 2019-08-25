@@ -62,12 +62,16 @@ Thus, it makes no sense in having an interval smaller than a minute.
 
 A .service file is provided for running SBFspot as a service under Linux.
 See text inside service file for how to use it, and study man page 
-for 'systemctl'.
+for 'systemctl'. If you want to get some output from the service, you
+may want to redirect output to a logfile. A good description of how to
+achieve this may be found at:
+https://stackoverflow.com/questions/37585758/how-to-redirect-output-of-systemd-service-to-a-file
  
 The advantage of running SBFspot continuously/periodically is eliminating
 the overhead of reconnecting and disconnecting from inverter and databases,
 if databases are used. Even greater advantages when using MQTT would be won
 if MQTT was integrated using available C/C++ MQTT libraries. Then lapse
-time could be reduced from 1.7 to 0.4 seconds on a Raspberry Pi 3B+.
+time could be significantly reduced, lowering CPU load, which might be
+important in low-end Raspberry Pi's or similar.
 
 A lapse timing will be shown with verbose >= 2.

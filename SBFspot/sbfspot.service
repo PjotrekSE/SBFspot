@@ -8,19 +8,21 @@
 
 [Unit]
 Description=SBFspot server
-After=network.target
+After=mysql.service mariadb.service network.target
 
 [Service]
+User=pi
 Type=simple
 PIDFile=/var/run/sbfspot.pid
-ExecStart=/usr/local/bin/sbfspot.3/SBFspot -d1 -v2 -ad0 -am0 -ae0 -q -nocsv -nosql -sp0 -cfgSBFspot-svc.cfg
+ExecStart=/usr/local/bin/sbfspot.3/SBFspot -d1 -v2 -ad0 -am0 -ae0 -q -nocsv -nosql -sp0 -cfgSBFspot-svc.cfg -mqtt
 ExecStop=/bin/kill -s TERM $MAINPID
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=on-abort
 RestartSec=10
-#TimeoutStartSec=10
+TimeoutStartSec=10
 KillMode=process
 TimeoutStopSec=5
+SyslogIdentifier=sbfspot
 
 [Install]
 WantedBy=multi-user.target

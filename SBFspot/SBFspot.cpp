@@ -199,6 +199,10 @@ int main(int argc, char **argv)
     verbose = cfg.verbose;
     quiet = cfg.quiet;
     ConnType = cfg.ConnectionType;
+		if ((VERBOSE_LOW) || (DEBUG_LOW)) {
+			setvbuf (stdout, NULL, _IOLBF, BUFSIZ); // Makes line blocking of buffer
+		}
+
 
 	if ((ConnType != CT_BLUETOOTH) && (cfg.settime == 1))
 	{
@@ -333,18 +337,24 @@ int main(int argc, char **argv)
 	#endif
 
 	// Set up loop timing
-	uint64_t accum = 0;
-  uint16_t loop  = 0;
+	uint64_t accum  = 0;
+	uint64_t ready  = 0;
+	uint64_t used   = 0;
+	uint64_t next   = 0;
+	uint64_t remain = 0;
+  uint16_t loop   = 0;
 	uint16_t interval = cfg.RunInterval;
 	struct timespec ts;
-	clock_gettime(CLOCK_REALTIME, &ts);
+	if (DEBUG_LOW) printf("Unblocking brk signals\n");
 	pthread_sigmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
+	clock_gettime(CLOCK_REALTIME, &ts);
 	uint64_t start = as_nsecs(&ts);
 	
   while (!term) {	// Here we check if break was signalled
 		pthread_sigmask(SIG_BLOCK, &brkSet, NULL);	// Block breaking
 		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
-		if (DEBUG_LOW) printf("Start of loop lapse=%u, interval=%u\n", loop, interval);
+		if (DEBUG_LOW) printf("Blocking brk & chg signals\nStart of loop lapse=%u, interval=%u\n", 
+			loop, interval);
 	// Synchronize plant time with system time
     // Only BT connected devices and if enabled in config _or_ requested by 123Solar
 	// Most probably Speedwire devices get their time from the local IP network
@@ -801,20 +811,24 @@ int main(int argc, char **argv)
 		db.event_data(Inverters, tagdefs);
 	#endif
 	}
-
+		
 		// Check for parameter change signalling
-		if (DEBUG_LOW) printf("Unblocking signals\n");
 		pthread_sigmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
 		pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
+		if (DEBUG_LOW) printf("Unblocking brk & chg signals\n");
 		// Set longjmp hither!
+		bool vialj = false;
 		if (setjmp(check_chgpar)) {
 			if (DEBUG_LOW) printf("Landed at setjmp(check_chgpar) from longjmp\n");
+			vialj = true;
 		}
 		else {
 			if (DEBUG_LOW) printf("Landed at setjmp(check_chgpar) normally\n");
+			vialj = false;
 		}
 		if (hup) {	// Did we get a sighup? If so, read alternate cfg from tmp
 			pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+			if (DEBUG_LOW) printf("Blocking chg signals\n");
 			hup = 0;
 			std::string altcfg = cfg.AltConfig;
 			if (boost::filesystem::is_regular_file(altcfg)) {
@@ -830,32 +844,37 @@ int main(int argc, char **argv)
 			else {
 				if (quiet == 0) printf("No config file in '%s' - ignoring SIGHUP\n",altcfg.c_str());
 			}
+			if (DEBUG_LOW) printf("Unblocking chg signals\n");
 			pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		}
 		if (usr1) {  // Did we get a sigusr1? If so, set interval1
 			pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+			if (DEBUG_LOW) printf("Blocking chg signals\n");
 			usr1 = 0;
 			interval = cfg.RunInterval1;
-			if (DEBUG_LOW) printf("Processed SIGUSR1, interval=%u\n", interval);
+			if (DEBUG_LOW) printf("Processed SIGUSR1, interval=%u\nUnblocking chg signals\n", interval);
 			pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		}
 		if (usr2) {  // Did we get a sigusr2? If so, set interval2
 			pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+			if (DEBUG_LOW) printf("Blocking chg signals\n");
 			usr2 = 0;
 			interval = cfg.RunInterval2;
-			if (DEBUG_LOW) printf("Processed SIGUSR2, interval=%u\n", interval);
+			if (DEBUG_LOW) printf("Processed SIGUSR2, interval=%u\nUnblocking chg signals\n", interval);
 			pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		}
 		
 		// Loop timing
 		clock_gettime(CLOCK_REALTIME, &ts);	// Get NOW
-		uint64_t ready = as_nsecs(&ts);
-		uint64_t used = ready - start;      // Used time
-		accum += used;			 	              // Accumulate used time for stats
-		uint64_t next = start + interval * 60000000000;	// Next run! (This way, there is no drift)
-		uint64_t remain = next - ready;     // Remaining time to next run
+		ready = as_nsecs(&ts);
+		if (!vialj) {
+			used = ready - start;      // Used time
+			accum += used;			 	              // Accumulate used time for stats
+		}
+		next = start + interval * 60000000000;	// Next run! (This way, there is no drift)
+		remain = next - ready;     // Remaining time to next run
 		if ((VERBOSE_HIGH) || (DEBUG_LOW)) {
-			printf("lapse=%u used=%.3f ns, accum=%.3f ns, remain=%.3f ns, interval=%d min\n\n", 
+			printf("lapse=%u used=%.3f s, accum=%.3f s, remain=%.3f s, interval=%d min\n\n", 
 							loop, (double)used/1000000000, (double)accum/1000000000, 
 							(double)remain/1000000000, interval);
 		}
@@ -874,14 +893,15 @@ int main(int argc, char **argv)
 			nanosleep(&ts, NULL);	// Wait till interval elapsed
 		}
 		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
+		if (DEBUG_LOW) printf("Blocking chg signals\n");
 		
 		loop++;
 		start = next;	// Next start
 	}
 	if (DEBUG_LOW) printf("Quit looping, lapse=%d\n", loop);
 	// Loop timing result
-	uint16_t lapse = accum / (loop * 1000000);
-	if ((VERBOSE_HIGH) || (DEBUG_LOW)) printf("Each lapse took %u ms\n", lapse);
+	uint16_t lapse = accum / (loop * 1000000000);
+	if ((VERBOSE_HIGH) || (DEBUG_LOW)) printf("Each lapse took %.1f s\n", (double)lapse/1000000000);
 	
 	// Only needed when running MQTT publisher asynchronously
 	// If MQTT used: sleep 2 sec to make sure all mqtt messages were sent before disconnecting
