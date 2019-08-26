@@ -7,10 +7,13 @@
 #  unneccesary options, for instance csv or db downloads.
 # If wanting output, enable as preferred. Inspect stdoutput
 #  with command 'sudo journalctl -efu sbfspot.service' .
+# The line 'RestartForceExitStatus=250' is needed in case the
+#  inverter is slow coming up after a network restart.
 
 [Unit]
 Description=SBFspot server
-After=mysql.service mariadb.service network.target
+After=mysql.service mariadb.service network-online.target
+Wants=network-online.target
 
 [Service]
 User=pi
@@ -19,9 +22,10 @@ PIDFile=/var/run/sbfspot.pid
 ExecStart=/usr/local/bin/sbfspot.3/SBFspot -d1 -v2 -ad0 -am0 -ae0 -q -nocsv -nosql -sp0 -cfgSBFspot-svc.cfg -mqtt
 ExecStop=/bin/kill -s TERM $MAINPID
 ExecReload=/bin/kill -s HUP $MAINPID
-Restart=on-fail
-RestartSec=10
-TimeoutStartSec=10
+Restart=on-failure
+RestartSec=60
+RestartForceExitStatus=250
+TimeoutStartSec=20
 KillMode=process
 TimeoutStopSec=5
 SyslogIdentifier=sbfspot

@@ -17,7 +17,7 @@ RunInterval1=0
 RunInterval2=0
 
 
-Using the parameter RunInterval, it is possible to run SBFspot at 
+Using the parameter RunInterval, it is possible to run SBFspot at
 regular intervals from 1 to 300 minutes. A RunInterval of 0 means a
 one-shot operation, that is, just as before.
 
@@ -40,14 +40,15 @@ It is also possible to make SBFspot reread the entire config file from
 an alternate location, specified by the AltConfig parameter. To activate
 this, run Linux command: 'pkill -HUP SBFspot'.
 
-To end the continuously running SBFspot, run Linux command: 
+To end the continuously running SBFspot, run Linux command:
  'pkill -TERM SBFspot', or just pressing Ctrl-C. SBFspot will then finish
 immediately if it was in a waiting state, otherwise as soon as current
 processing loop is finished.
 
 All these signals may of course also be sent from programs. Check the
-documentation for 'signal' for your favourite languages. 
-Node Red also has a node that can be used for this purpose.
+documentation for 'signal' for your favourite languages.
+Node Red has an 'exec' and a 'status' node that can be used for this
+purpose.
 
 There are many uses for features like this. In my setting, SBFspot
 normally runs every 5 minutes. But when I switch on the charger for my
@@ -61,13 +62,13 @@ hour; trying more than that results in 'Connection denied'.
 Thus, it makes no sense in having an interval smaller than a minute.
 
 A .service file is provided for running SBFspot as a service under Linux.
-See text inside service file for how to use it, and study man page 
+See text inside service file for how to use it, and study man page
 for 'systemctl'. If you want output from SBFspot, enable optopns as
 preferred in the service file. Output may be inspected by the command
 'sudo journalctl -efu sbfspot.service' . If you want SBFspot's output to
-a separate logile and your system uses rsyslog, copy sbfspot.conf to 
+a separate logile and your system uses rsyslog, copy sbfspot.conf to
 /etc/rsyslog.d , following instructions in sbfspot.conf.
- 
+
 The advantage of running SBFspot continuously/periodically is eliminating
 the overhead of reconnecting and disconnecting from inverter and databases,
 if databases are used. Even greater advantages when using MQTT would be won

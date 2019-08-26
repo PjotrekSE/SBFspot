@@ -160,14 +160,14 @@ int main(int argc, char **argv)
 	sigaddset(&brkSet, SIGTERM);
 	sigaddset(&brkSet, SIGINT);
 	sigaddset(&brkSet, SIGQUIT);
-	pthread_sigmask(SIG_SETMASK, &brkSet, NULL);	// Block break signals for now
+	pthread_sigmask(SIG_SETMASK, &brkSet, NULL);	// Block 'break' signals for now
 
 	// Setup signal mask for changing parameters
 	sigemptyset(&chgSet);
 	sigaddset(&chgSet, SIGHUP);
 	sigaddset(&chgSet, SIGUSR1);
 	sigaddset(&chgSet, SIGUSR2);
-	pthread_sigmask(SIG_SETMASK, &chgSet, NULL);	// Block change signals for now
+	pthread_sigmask(SIG_SETMASK, &chgSet, NULL);	// Block 'change' signals for now
 
 	// Set up signal action handler
 	std::memset(&sa, 0, sizeof(struct sigaction));
@@ -875,9 +875,9 @@ int main(int argc, char **argv)
 		next = start + interval * 60000000000;	// Next run! (This way, there is no drift)
 		remain = next - ready;     // Remaining time to next run
 		if ((VERBOSE_HIGH) || (DEBUG_LOW)) {
-			printf("lapse=%u used=%.3f s, accum=%.3f s, remain=%.3f s, interval=%d min\n\n", 
-							loop, as_dbleSec(used), as_dbleSec(accum), 
-							as_dbleSec(remain), interval);
+			printf("lapse=%u used=%.3f s (average=%.3f s), accum=%.3f s, remain=%.3f s, interval=%d min\n\n", 
+							loop, as_dbleSec(used), as_dbleSec(accum/(loop+1)), 
+							as_dbleSec(accum), as_dbleSec(remain), interval);
 		}
 		if (interval == 0) {   // RunInterval == 0 means run once
 			loop = 1;
@@ -901,7 +901,7 @@ int main(int argc, char **argv)
 	}
 	if (DEBUG_LOW) printf("Quit looping, lapse=%d\n", loop);
 	// Loop timing result
-	int16_t lapse = accum / (loop * 1000000000);
+	uint64_t lapse = accum / loop;
 	if ((VERBOSE_HIGH) || (DEBUG_LOW)) printf("Each lapse took %.1f s\n", as_dbleSec(lapse));
 	
 	// Only needed when running MQTT publisher asynchronously
