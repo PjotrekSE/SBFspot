@@ -878,6 +878,7 @@ int main(int argc, char **argv)
 			printf("lapse=%u used=%.3f s (average=%.3f s), accum=%.3f s, remain=%.3f s, interval=%d min\n\n", 
 							loop, as_dbleSec(used), as_dbleSec(accum/(loop+1)), 
 							as_dbleSec(accum), as_dbleSec(remain), interval);
+			memusage();
 		}
 		if (interval == 0) {   // RunInterval == 0 means run once
 			loop = 1;
@@ -3762,3 +3763,19 @@ E_SBFSPOT getDeviceData(InverterData *inv, LriDef lri, uint16_t cmd, Rec40S32 &d
     return rc;
 }
 
+void memusage() {
+
+    int tSize = 0, resident = 0, share = 0;
+    ifstream buffer("/proc/self/statm");
+    buffer >> tSize >> resident >> share;
+    buffer.close();
+
+    long page_size_kb = sysconf(_SC_PAGE_SIZE) / 1024; // in case x86-64 is configured to use 2MB pages
+    double rss = resident * page_size_kb;
+    cout << "RSS - " << rss << " kB\n";
+
+    double shared_mem = share * page_size_kb;
+    cout << "Shared Memory - " << shared_mem << " kB\n";
+
+    cout << "Private Memory - " << rss - shared_mem << "kB\n";
+}

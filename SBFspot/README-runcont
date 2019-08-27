@@ -38,7 +38,8 @@ the long time stability will remain the same.
 
 It is also possible to make SBFspot reread the entire config file from
 an alternate location, specified by the AltConfig parameter. To activate
-this, run Linux command: 'pkill -HUP SBFspot'.
+this, run Linux command: 'pkill -HUP SBFspot'. It is also possible to
+invoke a config reload by the command 'systemctl reload sbfspot.service'.
 
 To end the continuously running SBFspot, run Linux command:
  'pkill -TERM SBFspot', or just pressing Ctrl-C. SBFspot will then finish

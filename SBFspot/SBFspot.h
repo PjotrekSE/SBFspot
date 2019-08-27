@@ -499,6 +499,7 @@ inline struct timespec as_timespec(const uint64_t inval) {
 }
 // As a macro to avoid typechecking of inp
 #define as_dbleSec(inp) static_cast<double>(inp)/1000000000.
+void memusage();
 
 extern unsigned char CommBuf[COMMBUFSIZE];
 
