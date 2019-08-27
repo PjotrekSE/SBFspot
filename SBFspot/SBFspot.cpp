@@ -345,7 +345,7 @@ int main(int argc, char **argv)
   uint16_t loop   = 0;
 	uint16_t interval = cfg.RunInterval;
 	struct timespec ts;
-	if (DEBUG_LOW) printf("Unblocking brk signals\n");
+	if (DEBUG_LOW) printf("Unblocking brk signals\n \n");
 	pthread_sigmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
 	clock_gettime(CLOCK_REALTIME, &ts);
 	uint64_t start = as_nsecs(&ts);
@@ -353,7 +353,7 @@ int main(int argc, char **argv)
   while (!term) {	// Here we check if break was signalled
 		pthread_sigmask(SIG_BLOCK, &brkSet, NULL);	// Block breaking
 		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
-		if (DEBUG_LOW) printf("Blocking brk & chg signals\nStart of loop lapse=%u, interval=%u\n", 
+		if (DEBUG_LOW) printf("Lapse=%u loop start: interval=%u\nBlocking brk & chg signals\n", 
 			loop, interval);
 	// Synchronize plant time with system time
     // Only BT connected devices and if enabled in config _or_ requested by 123Solar
@@ -875,10 +875,20 @@ int main(int argc, char **argv)
 		next = start + interval * 60000000000;	// Next run! (This way, there is no drift)
 		remain = next - ready;     // Remaining time to next run
 		if ((VERBOSE_HIGH) || (DEBUG_LOW)) {
-			printf("lapse=%u used=%.3f s (average=%.3f s), accum=%.3f s, remain=%.3f s, interval=%d min\n\n", 
-							loop, as_dbleSec(used), as_dbleSec(accum/(loop+1)), 
-							as_dbleSec(accum), as_dbleSec(remain), interval);
-			memusage();
+			char buff[15];
+			snprintf(buff, sizeof(buff), "Lapse=%u", loop);
+			printf("%s used=%.3f s, accum=%.3f s, remain=%.3f s\n", 
+							buff, as_dbleSec(used), as_dbleSec(accum), as_dbleSec(remain));
+			int l = strlen(buff);	// Some acrobatics to tabulate the remaining rows
+			memset(buff,' ',l);
+			buff[l] = 0;
+			printf("%s average=%.3f s, interval=%d min\n", 
+							buff, as_dbleSec(accum/(loop+1)), interval);
+			if (DEBUG_LOW) {
+				printf("%s start=%.3f s, ready=%.3f s, next=%.3f s\n", 
+					buff, as_dbleSec(start), as_dbleSec(ready), as_dbleSec(next));
+				memusage();
+			}
 		}
 		if (interval == 0) {   // RunInterval == 0 means run once
 			loop = 1;
@@ -891,7 +901,9 @@ int main(int argc, char **argv)
 			// Below is where we normally get our signals,
 			//	loop normally takes less than half asecond, 
 			//	with mqtt about 1.5 seconds, and here we wait for minutes
-			if (DEBUG_LOW) printf("Sleeping %.1f sec\n", as_dbleSec(remain));
+			if (DEBUG_LOW) {
+				printf("Sleeping %.3f sec\n \n", as_dbleSec(remain));
+			}
 			nanosleep(&ts, NULL);	// Wait till interval elapsed
 		}
 		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
@@ -3775,7 +3787,7 @@ void memusage() {
     cout << "RSS - " << rss << " kB\n";
 
     double shared_mem = share * page_size_kb;
-    cout << "Shared Memory - " << shared_mem << " kB\n";
+    cout << "    Shared Memory - " << shared_mem << " kB\n";
 
-    cout << "Private Memory - " << rss - shared_mem << "kB\n";
+    cout << "    Private Memory - " << rss - shared_mem << " kB\n";
 }

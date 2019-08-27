@@ -68,7 +68,8 @@ for 'systemctl'. If you want output from SBFspot, enable optopns as
 preferred in the service file. Output may be inspected by the command
 'sudo journalctl -efu sbfspot.service' . If you want SBFspot's output to
 a separate logile and your system uses rsyslog, copy sbfspot.conf to
-/etc/rsyslog.d , following instructions in sbfspot.conf.
+/etc/rsyslog.d , following instructions in sbfspot-log.conf.
+You may also want to use sbfspot-rot.conf if your system uses logrotate.
 
 The advantage of running SBFspot continuously/periodically is eliminating
 the overhead of reconnecting and disconnecting from inverter and databases,
