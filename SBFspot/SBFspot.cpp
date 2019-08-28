@@ -344,17 +344,24 @@ int main(int argc, char **argv)
 	uint64_t next   = 0;
   uint16_t loop   = 0;
 	uint16_t interval = cfg.RunInterval;
+	const clockid_t clkid = CLOCK_MONOTONIC_RAW;	// CLOCK_MONOTONIC CLOCK_BOOTTIME CLOCK_MONOTONIC_RAW
 	struct timespec ts;
-	if (DEBUG_LOW) printf("Unblocking brk signals\n \n");
+	if (DEBUG_LOW) {
+		uint64_t resol = as_nsecs(&ts);
+		clock_getres(clkid, &ts);
+		printf("Clock resolution=%llu ns\n", resol);
+		printf("Unblocking brk signals\n \n");
+	}
 	pthread_sigmask(SIG_UNBLOCK, &brkSet, NULL);	// Unblock breaking
-	clock_gettime(CLOCK_REALTIME, &ts);
+	clock_gettime(clkid, &ts);
 	uint64_t start = as_nsecs(&ts);
 	
   while (!term) {	// Here we check if break was signalled
 		pthread_sigmask(SIG_BLOCK, &brkSet, NULL);	// Block breaking
 		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
-		if (DEBUG_LOW) printf("Lapse=%u loop start: interval=%u\nBlocking brk & chg signals\n", 
+		if (DEBUG_LOW) printf("Lapse=%u loop start, interval=%u s\nBlocking brk & chg signals\n", 
 			loop, interval);
+	
 	// Synchronize plant time with system time
     // Only BT connected devices and if enabled in config _or_ requested by 123Solar
 	// Most probably Speedwire devices get their time from the local IP network
@@ -836,7 +843,7 @@ int main(int argc, char **argv)
 				rc = GetConfig(&cfg);
 				if (rc != 0) return rc;
 				interval = cfg.RunInterval;
-				if (DEBUG_LOW) printf("Processed SIGHUP, interval=%u\n", interval);
+				if (DEBUG_LOW) printf("Processed SIGHUP, interval=%u s\n", interval);
 				if ((VERBOSE_HIGH) || (DEBUG_LOW)) 
 						printf("Read alternate config file, new run interval=%u min\n", interval);
 				if (DEBUG_LOW) printf("Alternate config file='%s'\n", altcfg.c_str());
@@ -852,7 +859,7 @@ int main(int argc, char **argv)
 			if (DEBUG_LOW) printf("Blocking chg signals\n");
 			usr1 = 0;
 			interval = cfg.RunInterval1;
-			if (DEBUG_LOW) printf("Processed SIGUSR1, interval=%u\nUnblocking chg signals\n", interval);
+			if (DEBUG_LOW) printf("Processed SIGUSR1, interval=%u s\nUnblocking chg signals\n", interval);
 			pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		}
 		if (usr2) {  // Did we get a sigusr2? If so, set interval2
@@ -860,29 +867,32 @@ int main(int argc, char **argv)
 			if (DEBUG_LOW) printf("Blocking chg signals\n");
 			usr2 = 0;
 			interval = cfg.RunInterval2;
-			if (DEBUG_LOW) printf("Processed SIGUSR2, interval=%u\nUnblocking chg signals\n", interval);
+			if (DEBUG_LOW) printf("Processed SIGUSR2, interval=%u s\nUnblocking chg signals\n", interval);
 			pthread_sigmask(SIG_UNBLOCK, &chgSet, NULL);	// Unblock changing params
 		}
 		
 		// Loop timing
-		clock_gettime(CLOCK_REALTIME, &ts);	// Get NOW
+		clock_gettime(clkid, &ts); // Get NOW
 		ready = as_nsecs(&ts);
-		if (!vialj) {
-			used = ready - start;      // Used time
-			if (used < 0) printf("This should never happen: used=%.3f<0\n", as_dbleSec(used));
-			accum += used;			 	     // Accumulate used time for stats
+		if (!vialj) {	             // Skip if chg signal received!
+			used = ready - start;    // Used time
+			if (used < 0) printf("This should never happen: used=%.3f<0!\n", as_dbleSec(used));
+			accum += used;			 	   // Accumulate used time for stats
 		}
-		next = start + interval * 60000000000;	// Next run! (This way, there is no drift)
+		next = start + static_cast<uint64_t>(interval) * 1000000000;	// Next run! (This way, there is no drift)
 		remain = next - ready;     // Remaining time to next run
+		if (remain < 300000000) {	 // < .3 sec? -Could happen when we decrease loop time!
+			remain = 300000000;	     // Set to .3 sec in the future
+			next = ready + remain;
+		}
 		if ((VERBOSE_HIGH) || (DEBUG_LOW)) {
 			char buff[15];
 			snprintf(buff, sizeof(buff), "Lapse=%u", loop);
 			printf("%s used=%.3f s, accum=%.3f s, remain=%.3f s\n", 
 							buff, as_dbleSec(used), as_dbleSec(accum), as_dbleSec(remain));
 			int l = strlen(buff);	// Some acrobatics to tabulate the remaining rows
-			memset(buff,' ',l);
-			buff[l] = 0;
-			printf("%s average=%.3f s, interval=%d min\n", 
+			memset(buff,' ',l);   // No need for a '0' - it is already there!
+			printf("%s average=%.3f s, interval=%d s\n", 
 							buff, as_dbleSec(accum/(loop+1)), interval);
 			if (DEBUG_LOW) {
 				printf("%s start=%.3f s, ready=%.3f s, next=%.3f s\n", 
@@ -898,11 +908,11 @@ int main(int argc, char **argv)
 		// Loop timing handling
 		if (remain > 0) {	// Skip sleep if negative remain
 			ts = as_timespec(remain);	// As timespec for nanosleep
-			// Below is where we normally get our signals,
-			//	loop normally takes less than half asecond, 
-			//	with mqtt about 1.5 seconds, and here we wait for minutes
+			// At sleep is where we normally get our signals,
+			//	loop normally takes less than half asecond, unless db used
+			//	with mqtt about .35 seconds, and here we wait for minutes
 			if (DEBUG_LOW) {
-				printf("Sleeping %.3f sec\n \n", as_dbleSec(remain));
+				printf("Sleeping %.3f s\n \n", as_dbleSec(remain));
 			}
 			nanosleep(&ts, NULL);	// Wait till interval elapsed
 		}
@@ -2421,8 +2431,8 @@ int GetConfig(Config *cfg)
 
     // Values for run continuously
     cfg->RunInterval = 0;
-    cfg->RunInterval = 0;
     cfg->AltConfig = "";
+    cfg->RunInterval1 = 0;
     cfg->RunInterval2 = 0;
 
     cfg->CSV_Export = 1;
@@ -2790,13 +2800,13 @@ int GetConfig(Config *cfg)
 					}
 				}
 
-				// Run interval in minutes, must be >= 0, 0 means run once
+				// Run interval in seconds, must be >= 0, 0 means run once
         else if(stricmp(variable, "RunInterval") == 0) {
           lValue = strtol(value, &pEnd, 10);
-          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
+          if ((lValue >= 0) && (lValue <= 300*60) && (*pEnd == 0))
             cfg->RunInterval = (int)lValue;
          else {
-            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
+            fprintf(stderr, CFG_InvalidValue, variable, "(0-300*60)");
             rc = -2;
           }
         }
@@ -2804,19 +2814,19 @@ int GetConfig(Config *cfg)
 					cfg->AltConfig = value;
         else if(stricmp(variable, "RunInterval1") == 0) {
           lValue = strtol(value, &pEnd, 10);
-          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
+          if ((lValue >= 0) && (lValue <= 300*60) && (*pEnd == 0))
             cfg->RunInterval1 = (int)lValue;
           else {
-            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
+            fprintf(stderr, CFG_InvalidValue, variable, "(0-300*60)");
             rc = -2;
           }
         }
         else if(stricmp(variable, "RunInterval2") == 0) {
           lValue = strtol(value, &pEnd, 10);
-          if ((lValue >= 0) && (lValue <= 300) && (*pEnd == 0))
+          if ((lValue >= 0) && (lValue <= 300*60) && (*pEnd == 0))
             cfg->RunInterval2 = (int)lValue;
           else {
-            fprintf(stderr, CFG_InvalidValue, variable, "(0-300)");
+            fprintf(stderr, CFG_InvalidValue, variable, "(0-300*60)");
             rc = -2;
           }
         }
@@ -2936,7 +2946,7 @@ void ShowConfig(Config *cfg)
 		"\nSynchTimeHigh=" << cfg->synchTimeHigh << \
 		"\nSunRSOffset=" << cfg->SunRSOffset << \
 		"\nRunInterval=" << cfg->RunInterval << \
-		"\nAltConfig=" << cfg->RunInterval << \
+		"\nAltConfig=" << cfg->AltConfig << \
 		"\nRunInterval1=" << cfg->RunInterval1 << \
 		"\nRunInterval2=" << cfg->RunInterval2 << \
 		"\nDecimalPoint=" << dp2txt(cfg->decimalpoint) << \
