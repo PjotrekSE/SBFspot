@@ -5,6 +5,13 @@
 # Use special config file (see below) for the service,
 #  making SBFspot as quiet as possible. Deactivate all
 #  unneccesary options, for instance csv or db downloads.
+# To be installed in /usr/lib/systemd/system/
+# Permissions 664, owned by root:root
+# Must use run-continuously-version of SBFspot with
+#  option RunInterval set to nonzero in config file
+# Use special config file (see below) for the service,
+#  making SBFspot as quiet as possible. Deactivate all
+#  unneccesary options, for instance csv or db downloads.
 # If wanting output, enable as preferred. Inspect stdoutput
 #  with command 'sudo journalctl -efu sbfspot.service' .
 # The line 'RestartForceExitStatus=250' is needed in case the
@@ -12,23 +19,20 @@
 
 [Unit]
 Description=SBFspot server
-After=mysql.service mariadb.service network-online.target
+After=mysql.service mariadb.service network-online.target ntp.service multi-user.target
 Wants=network-online.target
 
 [Service]
 User=pi
 Type=simple
-PIDFile=/var/run/sbfspot.pid
-ExecStart=/usr/local/bin/sbfspot.3/SBFspot -d1 -v2 -ad0 -am0 -ae0 -q -nocsv -nosql -sp0 -cfgSBFspot-svc.cfg -mqtt
+PIDFile=/run/sbfspot.pid
+ExecStart=/usr/local/bin/sbfspot.3/SBFspot -d1 -v2 -ad0 -am0 -ae0 -nocsv -nosql -sp0 -cfgSBFspot-svc.cfg -mqtt
 ExecStop=/bin/kill -s TERM $MAINPID
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=on-failure
 RestartSec=60
 RestartForceExitStatus=250
-TimeoutStartSec=20
+TimeoutStartSec=60
 KillMode=process
 TimeoutStopSec=5
 SyslogIdentifier=sbfspot
-
-[Install]
-WantedBy=multi-user.target
