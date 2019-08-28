@@ -907,13 +907,13 @@ int main(int argc, char **argv)
 		
 		// Loop timing handling
 		if (remain > 0) {	// Skip sleep if negative remain
-			ts = as_timespec(remain);	// As timespec for nanosleep
 			// At sleep is where we normally get our signals,
 			//	loop normally takes less than half asecond, unless db used
 			//	with mqtt about .35 seconds, and here we wait for minutes
-			if (DEBUG_LOW) {
-				printf("Sleeping %.3f s\n \n", as_dbleSec(remain));
-			}
+			if (DEBUG_LOW) printf("Sleeping %.3f s\n \n", as_dbleSec(remain));
+			// Recalculate for accuracy
+			clock_gettime(clkid, &ts); // Get NOW
+			ts = as_timespec(next - as_nsecs(&ts));	// As timespec for nanosleep
 			nanosleep(&ts, NULL);	// Wait till interval elapsed
 		}
 		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params

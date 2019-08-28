@@ -1,6 +1,12 @@
 Readme file for run continuously and alternate config features
 ==============================================================
 
+*********************************************************************
+*  No responsibility is assumed for any malfunction caused by using *
+*   the 'run-continously' functionality.                            *
+*********************************************************************
+
+
 Four new parameters were added to the config file:
 
 # RunInterval
@@ -64,8 +70,6 @@ if database, and mqtt are used, as the the loop tim is close to or above
 2 seconds in a Raspberry Pi 3B+. It is not recommended to use intervals
 smaller than 10 seconds, as the inverter might be overloaded, causing
 problems with it's other functions. 
-***No responsibility is assumed for any malfunction caused by using
-this functionality.
 
 A .service file is provided for running SBFspot as a service under Linux.
 See text inside service file for how to use it, and study man page
