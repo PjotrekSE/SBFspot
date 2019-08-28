@@ -4,7 +4,7 @@ Readme file for run continuously and alternate config features
 Four new parameters were added to the config file:
 
 # RunInterval
-# Run interval in minutes, must be >= 0, 0 means run once
+# Run interval in seconds, must be >= 0, and < 300*60, 0 means run once
 RunInterval=5
 
 # Alternate config for SIGHUP
@@ -18,7 +18,7 @@ RunInterval2=0
 
 
 Using the parameter RunInterval, it is possible to run SBFspot at
-regular intervals from 1 to 300 minutes. A RunInterval of 0 means a
+regular intervals from 1 to 300*60 seconds. A RunInterval of 0 means a
 one-shot operation, that is, just as before.
 
 It is possible to set two alternate intervals with RunInterval1 and
@@ -30,9 +30,10 @@ SBFspot will then update the interval time, and immediately reset the
 loop timing to the new value. If the new loop value is < 0, a processing
 loop will be started immediately.
 SBFspot will show no drift in execution times over longer time, as it
-will always start on the same nanosecond, except for the case where loop
-time was negative as a consequence of a change. On the next lapse, however,
-it  will continue starting on the same nanosecond as before.
+will always start on the same nanosecond, except for the case where
+remaining loop time was negative as a consequence of a change. On the
+next lapse, however, it will continue starting on the same nanosecond
+as before.
 A slight variation will occur, due to influence by other tasks. However,
 the long time stability will remain the same.
 
@@ -58,9 +59,13 @@ to run SBFspot every minute, to use as much sun energy as possible,
 and as little as possible from the grid, and a USR2 signal to revert
 running every 5 minutes when the car is fully charged.
 
-It appears that at least my inverter honors at a maximum 60 queries per
-hour; trying more than that results in 'Connection denied'.
-Thus, it makes no sense in having an interval smaller than a minute.
+Using an interval smaller than 2 seconds would lead to strange results
+if database, and mqtt are used, as the the loop tim is close to or above
+2 seconds in a Raspberry Pi 3B+. It is not recommended to use intervals
+smaller than 10 seconds, as the inverter might be overloaded, causing
+problems with it's other functions. 
+***No responsibility is assumed for any malfunction caused by using
+this functionality.
 
 A .service file is provided for running SBFspot as a service under Linux.
 See text inside service file for how to use it, and study man page
