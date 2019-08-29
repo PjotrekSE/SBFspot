@@ -3,7 +3,7 @@ Readme file for run continuously and alternate config features
 
 *********************************************************************
 *  No responsibility is assumed for any malfunction caused by using *
-*   the 'run-continously' functionality.                            *
+*   the 'run-continuously' functionality.                            *
 *********************************************************************
 
 
@@ -65,26 +65,36 @@ to run SBFspot every minute, to use as much sun energy as possible,
 and as little as possible from the grid, and a USR2 signal to revert
 running every 5 minutes when the car is fully charged.
 
-Using an interval smaller than 2 seconds would lead to strange results
-if database, and mqtt are used, as the the loop tim is close to or above
-2 seconds in a Raspberry Pi 3B+. It is not recommended to use intervals
-smaller than 10 seconds, as the inverter might be overloaded, causing
-problems with it's other functions. 
+Testing with Raspberry Pi 3B+ and inverter SMA Sunny Tripower STL 6000TL-20:
+Using an interval smaller than 2 seconds leads to strange results
+if database, and mqtt are used, as the the loop time is close to or
+above 2 seconds. Testing with 1 sec interval was OK, with some slightly
+delayed outputs, but this is NOT recommended. It is not recommended
+to use intervals smaller than 10 seconds, as the inverter might be
+overloaded, causing problems with it's other functions. 
 
 A .service file is provided for running SBFspot as a service under Linux.
 See text inside service file for how to use it, and study man page
-for 'systemctl'. If you want output from SBFspot, enable optopns as
+for 'systemctl'. If you want output from SBFspot, enable options as
 preferred in the service file. Output may be inspected by the command
 'sudo journalctl -efu sbfspot.service' . If you want SBFspot's output to
-a separate logile and your system uses rsyslog, copy sbfspot.conf to
+a separate logfile and your system uses rsyslog, copy sbfspot.conf to
 /etc/rsyslog.d , following instructions in sbfspot-log.conf.
-You may also want to use sbfspot-rot.conf if your system uses logrotate.
+You may also want to use sbfspot-rot.conf if your system uses logrotate,
+see inside the file.
 
 The advantage of running SBFspot continuously/periodically is eliminating
 the overhead of reconnecting and disconnecting from inverter and databases,
 if databases are used. Even greater advantages when using MQTT would be won
-if MQTT was integrated using available C/C++ MQTT libraries. Then lapse
-time could be significantly reduced, lowering CPU load, which might be
-important in low-end Raspberry Pi's or similar.
+if MQTT was integrated using available C/C++ MQTT libraries, as then mqtt can
+be handled asynchronously. Thus lapse time could be significantly reduced,
+lowering CPU load, which might be important in low-end Raspberry Pi's or
+similar.
 
-A lapse timing will be shown with verbose >= 2.
+A lapse timing will be shown with verbose >= 1, and more extensively
+with debug >= 1.
+
+Interestingly, the 'run continuously' functionality also gives a nice
+opportunity to monitor memory usage in SBFspot, and track down possible
+memory leaks. For evaluating SBFspot's logs when run continuously, use
+the supplied program rdsbflog, see heading in that file.
