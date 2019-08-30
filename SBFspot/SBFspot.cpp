@@ -885,6 +885,7 @@ int main(int argc, char **argv)
 			remain = 300000000;	     // Set to .3 sec in the future
 			next = ready + remain;
 		}
+		// Print loop statistics
 		if ((VERBOSE_HIGH) || (DEBUG_LOW)) {
 			char buff[15];
 			snprintf(buff, sizeof(buff), "Lapse=%u", loop);
@@ -899,25 +900,26 @@ int main(int argc, char **argv)
 					buff, as_dbleSec(start), as_dbleSec(ready), as_dbleSec(next));
 				memusage();
 			}
+			if ((VERBOSE_HIGH) && (debug == 0)) printf(" \n");
 		}
 		if (interval == 0) {   // RunInterval == 0 means run once
 			loop = 1;
 			break;
 		}
 		
-		// Loop timing handling
+		// Sleep timing handling
 		if (remain > 0) {	// Skip sleep if negative remain
 			// At sleep is where we normally get our signals,
 			//	loop normally takes less than half asecond, unless db used
 			//	with mqtt about .35 seconds, and here we wait for minutes
-			if (DEBUG_LOW) printf("Sleeping %.3f s\n \n", as_dbleSec(remain));
+			if (DEBUG_LOW) printf("Sleeping %.3f s\n", as_dbleSec(remain));
 			// Recalculate for accuracy
 			clock_gettime(clkid, &ts); // Get NOW
 			ts = as_timespec(next - as_nsecs(&ts));	// As timespec for nanosleep
 			nanosleep(&ts, NULL);	// Wait till interval elapsed
 		}
 		pthread_sigmask(SIG_BLOCK, &chgSet, NULL);	// Block changing params
-		if (DEBUG_LOW) printf("Blocking chg signals\n");
+		if (DEBUG_LOW) printf("Blocking chg signals\n \n");
 		
 		loop++;
 		start = next;	// Next start
