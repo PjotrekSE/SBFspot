@@ -2804,7 +2804,7 @@ int GetConfig(Config *cfg)
 					}
 				}
 
-				// Run interval in seconds, must be >= 0, 0 means run once
+        // Run interval in seconds, must be >= 0, 0 means run once
         else if(stricmp(variable, "RunInterval") == 0) {
           lValue = strtol(value, &pEnd, 10);
           if ((lValue >= 0) && (lValue <= 300*60) && (*pEnd == 0))
@@ -2814,8 +2814,8 @@ int GetConfig(Config *cfg)
             rc = -2;
           }
         }
-				else if(stricmp(variable, "AltConfig") == 0)
-					cfg->AltConfig = value;
+        else if(stricmp(variable, "AltConfig") == 0)
+          cfg->AltConfig = value;
         else if(stricmp(variable, "RunInterval1") == 0) {
           lValue = strtol(value, &pEnd, 10);
           if ((lValue >= 0) && (lValue <= 300*60) && (*pEnd == 0))
