@@ -199,7 +199,9 @@ int main(int argc, char **argv)
     verbose = cfg.verbose;
     quiet = cfg.quiet;
     ConnType = cfg.ConnectionType;
-		if ((VERBOSE_LOW) || (DEBUG_LOW)) {
+		// Set *line* blocking for print buffer - otherwise we don't see
+		//	printouts when running continuously until end of program
+		if ((VERBOSE_LOW || DEBUG_LOW) && !quiet && (cfg.RunInterval > 0)) {
 			setvbuf (stdout, NULL, _IOLBF, BUFSIZ); // Makes line blocking of buffer
 		}
 
